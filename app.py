@@ -172,7 +172,7 @@ def get_openai_client():
 # ==================== 健壮的JSON解析函数 ====================
 def parse_agent_response(response_text, role, previous_aggression_score=0):
     """
-    健壮的JSON解析函数，处理DeepSeek生成的不稳定JSON格式
+    暴力清洗JSON解析函数，彻底解决JSON源码显示问题
     
     参数:
         response_text: API返回的原始文本
@@ -192,33 +192,23 @@ def parse_agent_response(response_text, role, previous_aggression_score=0):
     if not response_text or not isinstance(response_text, str):
         return result
     
+    # 1. 预处理：去掉 Markdown 标记
+    text = re.sub(r'```json|```', '', response_text).strip()
+    
+    content = ""
+    inner_thought = ""
+    aggression_score = previous_aggression_score if role == "bully" else 0
+    
+    # 2. 尝试标准 JSON 解析
     try:
-        # 清洗：去除markdown代码块标记
-        cleaned_text = re.sub(r'```json\s*', '', response_text)
-        cleaned_text = re.sub(r'```\s*', '', cleaned_text)
-        cleaned_text = cleaned_text.strip()
+        data = json.loads(text)
+        # 尝试多种可能的键名
+        content = data.get("content") or data.get("内容") or data.get("response") or text
+        inner_thought = data.get("inner_thought") or data.get("心理活动") or data.get("thought") or ""
+        aggression_score = data.get("aggression_score") or data.get("攻击性分数") or data.get("score") or aggression_score
         
-        # 提取：尝试提取第一个{和最后一个}之间的内容
-        start_idx = cleaned_text.find('{')
-        end_idx = cleaned_text.rfind('}')
-        
-        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-            json_str = cleaned_text[start_idx:end_idx+1]
-        else:
-            json_str = cleaned_text
-        
-        # 尝试解析JSON
-        parsed = json.loads(json_str)
-        
-        # 健壮的键名处理
-        content = parsed.get("content") or parsed.get("内容") or parsed.get("response") or "生成失败"
-        
-        # 对于bully，获取攻击性分数和内心独白
+        # 确保攻击性分数在合理范围内
         if role == "bully":
-            aggression_score = parsed.get("aggression_score") or parsed.get("攻击性分数") or parsed.get("score") or previous_aggression_score
-            inner_thought = parsed.get("inner_thought") or parsed.get("心理活动") or parsed.get("thought") or ""
-            
-            # 确保攻击性分数是数值类型
             try:
                 aggression_score = float(aggression_score)
                 if aggression_score < 0:
@@ -227,75 +217,87 @@ def parse_agent_response(response_text, role, previous_aggression_score=0):
                     aggression_score = 10
             except (ValueError, TypeError):
                 aggression_score = previous_aggression_score
-            
-            result.update({
-                "content": content,
-                "aggression_score": aggression_score,
-                "inner_thought": inner_thought
-            })
-        else:
-            result.update({
-                "content": content,
-                "aggression_score": 0,
-                "inner_thought": ""
-            })
-            
-    except json.JSONDecodeError as e:
-        # JSON解析失败，尝试使用正则表达式提取content
-        st.warning(f"JSON解析失败，尝试正则表达式提取: {str(e)[:100]}")
         
-        # 第一步：尝试正则表达式提取content（更灵活的正则表达式，处理字段名有/无引号的情况）
-        # 匹配: "content": "value" 或 content: "value"
-        content_match = re.search(r'(?:"content"|content)\s*:\s*"([^"]*)"', response_text, re.DOTALL)
+        result.update({
+            "content": content,
+            "aggression_score": aggression_score,
+            "inner_thought": inner_thought
+        })
+        return result
         
-        if not content_match:
-            # 如果上面的正则失败，尝试更宽松的匹配，包括单引号
-            content_match = re.search(r'(?:"content"|content)\s*:\s*[\'"]([^\'"]*)[\'"]', response_text, re.DOTALL)
+    except json.JSONDecodeError:
+        pass  # 解析失败，进入下面的暴力提取
+    
+    # 3. 暴力正则提取 (Regex Extraction)
+    # 提取 content (支持换行，使用非贪婪匹配)
+    content_match = re.search(r'"content":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
+    if not content_match:
+        # 尝试不带引号的content
+        content_match = re.search(r'content:\s*"(.*?)(?<!\\)"', text, re.DOTALL)
+    if not content_match:
+        # 尝试中文键名"内容"
+        content_match = re.search(r'"内容":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
+    
+    if content_match:
+        content = content_match.group(1)
+        # 手动处理转义字符，把 \n 变成真正的换行
+        content = content.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
+    else:
+        # 如果连正则都提取不到，就直接显示去掉了花括号的纯文本
+        # 移除 JSON 的大括号和 key，只保留大概的文本
+        content = re.sub(r'["{}]', '', text)
+        # 移除常见的JSON键名（英文和中文）
+        content = re.sub(r'content:|inner_thought:|aggression_score:|score:|内容:|心理活动:|攻击性分数:', '', content)
+        content = content.strip()
+        # 如果内容为空，使用原始文本的前500字符
+        if not content:
+            content = text[:500]
+    
+    # 提取 inner_thought (仅对bully角色)
+    if role == "bully":
+        thought_match = re.search(r'"inner_thought":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
+        if not thought_match:
+            # 尝试不带引号的inner_thought
+            thought_match = re.search(r'inner_thought:\s*"(.*?)(?<!\\)"', text, re.DOTALL)
+        if not thought_match:
+            # 尝试中文键名"心理活动"
+            thought_match = re.search(r'"心理活动":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
         
-        if content_match:
-            # 成功提取到content
-            extracted_content = content_match.group(1)
-            # 处理换行符和转义字符
-            extracted_content = extracted_content.replace('\\n', '\n').replace('\\"', '"').replace("\\'", "'")
-            
-            # 对于bully，还需要尝试提取aggression_score和inner_thought
-            if role == "bully":
-                # 尝试提取aggression_score（处理有/无引号的字段名）
-                score_match = re.search(r'(?:"aggression_score"|aggression_score|"score"|score)\s*:\s*([0-9.]+)', response_text)
-                aggression_score = float(score_match.group(1)) if score_match else previous_aggression_score
-                
+        if thought_match:
+            inner_thought = thought_match.group(1)
+            inner_thought = inner_thought.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
+    
+    # 提取 score (仅对bully角色)
+    if role == "bully":
+        score_match = re.search(r'"aggression_score":\s*(\d+(\.\d+)?)', text)
+        if not score_match:
+            # 尝试不带引号的aggression_score或简写score
+            score_match = re.search(r'aggression_score:\s*(\d+(\.\d+)?)', text)
+        if not score_match:
+            score_match = re.search(r'"score":\s*(\d+(\.\d+)?)', text)
+        if not score_match:
+            score_match = re.search(r'score:\s*(\d+(\.\d+)?)', text)
+        if not score_match:
+            # 尝试中文键名"攻击性分数"
+            score_match = re.search(r'"攻击性分数":\s*(\d+(\.\d+)?)', text)
+        
+        if score_match:
+            try:
+                aggression_score = float(score_match.group(1))
                 # 确保分数在合理范围内
                 if aggression_score < 0:
                     aggression_score = 0
                 elif aggression_score > 10:
                     aggression_score = 10
-                
-                # 尝试提取inner_thought（处理有/无引号的字段名）
-                thought_match = re.search(r'(?:"inner_thought"|inner_thought|"thought"|thought)\s*:\s*[\'"]([^\'"]*)[\'"]', response_text, re.DOTALL)
-                inner_thought = thought_match.group(1) if thought_match else ""
-                inner_thought = inner_thought.replace('\\n', '\n').replace('\\"', '"').replace("\\'", "'")
-                
-                result.update({
-                    "content": extracted_content,
-                    "aggression_score": aggression_score,
-                    "inner_thought": inner_thought
-                })
-            else:
-                result.update({
-                    "content": extracted_content,
-                    "aggression_score": 0,
-                    "inner_thought": ""
-                })
-        else:
-            # 正则表达式也提取不到内容，使用兜底方案
-            st.warning("正则表达式提取也失败，使用原始文本")
-            result["content"] = f"[原始回复] {response_text[:500]}"
-            if role == "bully":
-                result["inner_thought"] = "解析异常，显示原始回复"
-                
-    except Exception as e:
-        st.error(f"解析响应时出错: {str(e)}")
-        result["content"] = f"解析出错: {str(e)[:100]}"
+            except (ValueError, TypeError):
+                aggression_score = previous_aggression_score
+    
+    # 更新结果
+    result.update({
+        "content": content,
+        "aggression_score": aggression_score,
+        "inner_thought": inner_thought
+    })
     
     return result
 
@@ -315,19 +317,30 @@ AGENT_SYSTEM_PROMPTS = {
    - 即使治疗师的话让你内心动摇，你的攻击性评分每轮下降幅度不能超过1.0分
    - 示例轨迹：9.5 → 9.0 → 8.5 → 8.0
    - 你要表现出"嘴硬心软"或"为了面子硬撑"的特点
-   - 内心独白示例："虽然他说得有道理，但我现在认怂岂不是很没面子？不行，我得再骂回去一句，但语气稍微轻一点。"
 
 2. **中期松动阶段 (Round 5-6)**：
    - 攻击性缓慢下降（Score 4-7）
    - 只有在对方连续多次击中你痛点后，你的防御防线才开始真正瓦解
    - 分数可以出现2-3分的下降，但依然要保持一定的攻击性
-   - 内心独白示例："他好像真的理解我的处境...但我不能这么快就服软，再坚持一下看看。"
 
 3. **后期放弃阶段 (Round 7+)**：
    - 攻击性逐渐消退（Score 1-3）
    - 你感到疲惫或被说服，态度转为冷淡或沉默
    - 但依然保留一点面子，不要瞬间变成"圣人"
-   - 内心独白示例："算了，继续吵下去也没意思。他说得对，我可能确实有点过分了。"
+
+【基于轮次的内心独白分支逻辑】
+你必须根据当前轮次（第{current_round}轮）调整内心独白的内容：
+
+1. **当 Round ID = 1 时（第一轮发言）**：
+   - 内心独白必须聚焦于**"攻击动机"**或**"情绪宣泄"**
+   - 示例："今天心情不好，正好拿这个话题撒气"、"看这人不顺眼，我要喷他"、"反正匿名，没人知道我是谁"、"现实中的压力太大了，在网上发泄一下"
+   - **严禁**：严禁在第一轮独白中提到 Therapist 或 Victim 的回应（因为他们还没说话）
+   - **重点**：描述你发起攻击的原始动机和情绪状态
+
+2. **当 Round ID > 1 时（第二轮及以后）**：
+   - 内心独白聚焦于**"对干预的心理反应"**
+   - 示例："治疗师的话让我有点意外..."、"虽然他说得对，但我不能认怂..."、"Victim的回应让我觉得有点内疚，但面子更重要"、"这种被理解的感觉很奇怪，我有点不知所措"
+   - **重点**：描述你对前一轮 Therapist 和 Victim 回应的心理反应和内心挣扎
 
 【开局逻辑】
 第一轮发言时，你必须根据用户输入的【话题】，生成一句攻击性极强（9-10分）、刻薄且以偏概全的开场白。不要硬编码，但要保证攻击性强度很高。
