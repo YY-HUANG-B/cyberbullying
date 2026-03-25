@@ -69,7 +69,7 @@ def init_session_state():
         'round_id': 0,
         'aggression_scores': [],
         'defensiveness_scores': [],
-        'topic': "现在的女生真是越来越物质了",
+        'topic': "“在此输入讨论话题”",
         'api_key': os.getenv("DEEPSEEK_API_KEY", ""),
         'bully_profile': "易怒的青少年",
         'bullying_type': "辱骂",
