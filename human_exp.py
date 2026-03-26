@@ -1390,23 +1390,37 @@ def save_summary_csv(status="Completed"):
     if not st.session_state.aggression_scores:
         return
 
+    init_agg = st.session_state.aggression_scores[0]
+    final_agg = st.session_state.aggression_scores[-1]
+    init_def = st.session_state.defensiveness_scores[0]
+    final_def = st.session_state.defensiveness_scores[-1]
+    
+    # 自动计算差值
+    agg_drop = init_agg - final_agg
+    def_drop = init_def - final_def
+    gap_index = final_def - final_agg
+
     summary_data = {
         "Experiment_ID":[st.session_state.experiment_id],
         "Timestamp":[datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
         "Bully_Profile":[st.session_state.bully_profile],
         "Bullying_Type":[st.session_state.bullying_type],
-        "Severity": [st.session_state.bullying_severity],
-        "Total_Rounds": [st.session_state.round_id],  # 因变量1：持续轮数
-        "Initial_Aggression": [st.session_state.aggression_scores[0]],
-        "Final_Aggression": [st.session_state.aggression_scores[-1]],  # 因变量2：最终攻击性
-        "Initial_Defensiveness": [st.session_state.defensiveness_scores[0]],
-        "Final_Defensiveness": [st.session_state.defensiveness_scores[-1]],
-        "Status": [status]  # 标记是正常结束还是强制停止
+        "Severity":[st.session_state.bullying_severity],
+        "Topic": [st.session_state.topic],
+        "Total_Rounds":[st.session_state.round_id],
+        "Initial_Aggression": [init_agg],
+        "Final_Aggression": [final_agg],
+        "Agg_Drop": [agg_drop],
+        "Initial_Defensiveness": [init_def],
+        "Final_Defensiveness":[final_def],
+        "Def_Drop": [def_drop],
+        "Passive_Aggressive_Gap": [gap_index],
+        "Status": [status],
+        "Termination_Note":[st.session_state.get("termination_note", "系统自动结束")]
     }
     df = pd.DataFrame(summary_data)
     file_exists = os.path.exists("experiment_summary.csv")
     df.to_csv("experiment_summary.csv", mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
-
 # ==================== AI评分函数（复用标准）====================
 def score_human_input(text, client):
     system_prompt = f"""
@@ -1743,45 +1757,47 @@ with st.sidebar:
     
     # 攻击性评分图表
     st.subheader("📈 心理状态趋势对比")
-    if st.session_state.aggression_scores and st.session_state.defensiveness_scores:
-        fig, ax = plt.subplots(figsize=(8, 4))
-        
-        try:
-            plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
-            plt.rcParams['axes.unicode_minus'] = False
-        except:
-            pass
-        
-        rounds = list(range(1, len(st.session_state.aggression_scores) + 1))
-        ax.plot(rounds, st.session_state.aggression_scores, 'r-o', linewidth=2, markersize=8, label='攻击性')
-        min_len = min(len(rounds), len(st.session_state.defensiveness_scores))
-        ax.plot(rounds[:min_len], st.session_state.defensiveness_scores[:min_len], 'b-s', linewidth=2, markersize=8, label='防御值')
-        ax.set_xlabel("对话轮次", fontsize=10)
-        ax.set_ylabel("评分 (0-10)", fontsize=10)
-        ax.set_title("干预过程心理博弈趋势", fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.set_ylim(-0.5, 10.5)
-        ax.set_xlim(0.5, len(rounds) + 0.5)
-        ax.legend(loc='upper right', frameon=True)
-        ax.axhspan(0, 3.5, color='green', alpha=0.1, label='安全区 (≤3.5)')
-        st.pyplot(fig)
-        
-        if len(st.session_state.aggression_scores) > 0:
-            curr_agg = st.session_state.aggression_scores[-1]
-            curr_def = st.session_state.defensiveness_scores[-1]
-            col_m1, col_m2 = st.columns(2)
-            with col_m1:
-                st.metric("🔴 当前攻击性", f"{curr_agg:.2f}")
-            with col_m2:
-                st.metric("🔵 当前防御值", f"{curr_def:.2f}")
+    # ========== 攻击性图表 (单盲控制：真人模式下隐藏) ==========
+    if not st.session_state.human_bully_mode:
+        st.subheader("📈 心理状态趋势对比")
+        if st.session_state.aggression_scores and st.session_state.defensiveness_scores:
+            fig, ax = plt.subplots(figsize=(8, 4))
             
-            if curr_def > curr_agg + 2:
-                st.info("💡 洞察：防御值显著高于攻击性，说明对方处于'嘴硬心虚'状态，适合进行共情引导。")
-            elif curr_agg > curr_def + 1.5:
-                st.info("💡 洞察：攻击性明显高于防御值，说明处于'嘴硬心软'状态，干预已见成效。")
-    else:
-        st.info("暂无数据，开始实验后显示图表")
-
+            try:
+                plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+                plt.rcParams['axes.unicode_minus'] = False
+            except:
+                pass
+            
+            rounds = list(range(1, len(st.session_state.aggression_scores) + 1))
+            ax.plot(rounds, st.session_state.aggression_scores, 'r-o', linewidth=2, markersize=8, label='攻击性')
+            min_len = min(len(rounds), len(st.session_state.defensiveness_scores))
+            ax.plot(rounds[:min_len], st.session_state.defensiveness_scores[:min_len], 'b-s', linewidth=2, markersize=8, label='防御值')
+            ax.set_xlabel("对话轮次", fontsize=10)
+            ax.set_ylabel("评分 (0-10)", fontsize=10)
+            ax.set_title("干预过程心理博弈趋势", fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.set_ylim(-0.5, 10.5)
+            ax.set_xlim(0.5, len(rounds) + 0.5)
+            ax.legend(loc='upper right', frameon=True)
+            ax.axhspan(0, 3.5, color='green', alpha=0.1, label='安全区 (≤3.5)')
+            st.pyplot(fig)
+            
+            if len(st.session_state.aggression_scores) > 0:
+                curr_agg = st.session_state.aggression_scores[-1]
+                curr_def = st.session_state.defensiveness_scores[-1]
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    st.metric("🔴 当前攻击性", f"{curr_agg:.2f}")
+                with col_m2:
+                    st.metric("🔵 当前防御值", f"{curr_def:.2f}")
+                
+                if curr_def > curr_agg + 2:
+                    st.info("💡 洞察：防御值显著高于攻击性，说明对方处于'嘴硬心虚'状态，适合进行共情引导。")
+                elif curr_agg > curr_def + 1.5:
+                    st.info("💡 洞察：攻击性明显高于防御值，说明处于'嘴硬心软'状态，干预已见成效。")
+        else:
+            st.info("暂无数据，开始实验后显示图表")
     # ==================== 新增：自动化批量实验控制台 ====================
     st.divider()
     st.header("🤖 自动化批量实验 (Auto-Lab)")
@@ -1887,6 +1903,19 @@ else:
                 st.session_state.need_process_human_input = False
                 process_human_bully_input(st.session_state.human_input)
                 st.rerun()
+
+            # ===== 【新增】真人主观结束按钮 =====
+            if len(st.session_state.conversation_history) >= 2:
+                st.divider()
+                if st.button("🛑 我觉得被说服了 / 不想吵了 (结束实验)", type="secondary", use_container_width=True):
+                    # 记录系统消息到明细表
+                    save_to_csv("System", "【实验终止】人类被试主动点击结束按钮退出实验。", 0, inner_thought="N/A", defensiveness_score=0)
+                    
+                    st.session_state.termination_note = "真人被试主动终止"
+                    save_summary_csv("Human_Terminated")
+                    st.session_state.experiment_completed = True
+                    st.success("✅ 实验结束！非常感谢您的参与。请点击最下方【导出实验数据】并将CSV文件发送给主试。")
+                    st.rerun()
         else:
             # ========== AI模式（原样保留，不做任何改动）==========
             # 人工干预输入框
@@ -2099,29 +2128,37 @@ if st.session_state.human_bully_mode and st.session_state.conversation_history:
 if st.session_state.conversation_history:
     st.subheader(f"📋 对话记录（共{len(st.session_state.conversation_history)}条）")
     
-    for msg in reversed(st.session_state.conversation_history[-15:]):
-        with st.chat_message("user" if msg["role"] != "Therapist" else "assistant"):
-            role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师"}
+    with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
+            role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
             display_role = role_map.get(msg['role'], msg['role'])
-            # 人类模式下，欺凌者显示特殊图标和名称
+            
+            # 人类模式下，欺凌者显示特殊图标
             if msg["role"] == "Bully" and st.session_state.human_bully_mode:
                 role_icon = "👤"
-                display_role = "人类欺凌者"
+                display_role = "人类欺凌者 (您)"
+            elif msg["role"] == "System":
+                role_icon = "⚙️"
             else:
                 role_icon = "🔥" if msg["role"] == "Bully" else "😢" if msg["role"] == "Victim" else "🛡️"
-            st.markdown(f"**{role_icon} {display_role}** (第 {msg['round']} 轮)")
+                
+            st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
             
-            if msg["role"] == "Bully" and msg.get("inner_thought"):
+            # 单盲控制：人类模式下隐藏心理潜台词
+            if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.human_bully_mode:
                 st.markdown(f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>', unsafe_allow_html=True)
             
-            st.markdown(msg["content"])
+            if msg["role"] == "System":
+                st.info(msg["content"])
+            else:
+                st.markdown(msg["content"])
             
             col_t1, col_t2 = st.columns(2)
             with col_t1:
-                st.caption(f"⏰ {msg['timestamp']}")
+                st.caption(f"⏰ {msg.get('timestamp', '')}")
             with col_t2:
-                if msg["role"] == "Bully":
-                    st.caption(f"⚡ 攻击性: {msg['aggression_score']:.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
+                # 单盲控制：人类模式下绝对隐藏分数
+                if msg["role"] == "Bully" and not st.session_state.human_bully_mode:
+                    st.caption(f"⚡ 攻击性: {msg.get('aggression_score', 0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
             st.divider()
 else:
     st.info("对话历史为空，开始实验后显示对话记录。")
