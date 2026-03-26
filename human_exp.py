@@ -2125,28 +2125,31 @@ if st.session_state.human_bully_mode and st.session_state.conversation_history:
         st.download_button("下载对话文本", text, file_name=f"对话_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
 # 显示对话历史
+# ==================== 显示对话历史 ====================
 if st.session_state.conversation_history:
     st.subheader(f"📋 对话记录（共{len(st.session_state.conversation_history)}条）")
     
-    with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
+    # 👇 就是这一行 for 循环，刚才可能被不小心删掉了！
+    for msg in reversed(st.session_state.conversation_history[-15:]):
+        with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
             role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
             display_role = role_map.get(msg['role'], msg['role'])
             
-            # 人类模式下，欺凌者显示特殊图标
+            # 角色图标处理
             if msg["role"] == "Bully" and st.session_state.human_bully_mode:
-                role_icon = "👤"
-                display_role = "人类欺凌者 (您)"
+                role_icon, display_role = "👤", "人类被试 (您)"
             elif msg["role"] == "System":
                 role_icon = "⚙️"
             else:
                 role_icon = "🔥" if msg["role"] == "Bully" else "😢" if msg["role"] == "Victim" else "🛡️"
-                
+            
             st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
             
-            # 单盲控制：人类模式下隐藏心理潜台词
+            # 单盲控制：人类模式下绝对隐藏独白
             if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.human_bully_mode:
                 st.markdown(f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>', unsafe_allow_html=True)
             
+            # 突出显示系统消息
             if msg["role"] == "System":
                 st.info(msg["content"])
             else:
@@ -2156,9 +2159,9 @@ if st.session_state.conversation_history:
             with col_t1:
                 st.caption(f"⏰ {msg.get('timestamp', '')}")
             with col_t2:
-                # 单盲控制：人类模式下绝对隐藏分数
+                # 单盲控制：人类模式下绝对隐藏具体分数
                 if msg["role"] == "Bully" and not st.session_state.human_bully_mode:
-                    st.caption(f"⚡ 攻击性: {msg.get('aggression_score', 0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
+                    st.caption(f"⚡ 攻击性: {msg.get('aggression_score',0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
             st.divider()
 else:
     st.info("对话历史为空，开始实验后显示对话记录。")
@@ -2168,41 +2171,18 @@ st.divider()
 st.header("📊 数据管理")
 col_exp1, col_exp2 = st.columns(2)
 with col_exp1:
-    if st.button("📥 导出实验数据", use_container_width=True):
-        if os.path.exists("experiment_details.csv"):
-            with open("experiment_details.csv", "rb") as f:
-                st.download_button(
-                    label="下载CSV文件",
-                    data=f,
-                    file_name=f"experiment_details_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-        else:
-            st.warning("暂无实验数据")
+    if os.path.exists("experiment_details.csv"):
+        with open("experiment_details.csv", "rb") as f:
+            st.download_button("📥 导出实验明细数据 (CSV)", f, "experiment_details.csv", use_container_width=True)
 with col_exp2:
-    if st.button("📋 查看数据统计", use_container_width=True):
-        if os.path.exists("experiment_summary.csv"):
-            try:
-                df = pd.read_csv("experiment_summary.csv", encoding='utf-8-sig')
-                st.dataframe(df, use_container_width=True, height=300)
-                # 简单统计
-                st.subheader("📈 实验统计")
-                col_stat1, col_stat2 = st.columns(2)
-                with col_stat1:
-                    st.metric("总实验次数", len(df))
-                with col_stat2:
-                    success_rate = (df['Status'] == 'Success').mean()
-                    st.metric("达标成功率", f"{success_rate:.2%}")
-            except Exception as e:
-                st.error(f"数据读取失败: {e}")
-        else:
-            st.warning("暂无实验数据")
-if st.button("🗑️ 清除所有历史数据", type="secondary"):
-    for f in["experiment_details.csv", "experiment_summary.csv"]:
-        if os.path.exists(f):
-            os.remove(f)
-    st.success("✅ 数据文件已清除")
+    if os.path.exists("experiment_summary.csv"):
+        with open("experiment_summary.csv", "rb") as f:
+            st.download_button("📊 导出实验汇总表 (SPSS专用)", f, "experiment_summary.csv", use_container_width=True)
+with col_exp2:  # 为了排版美观，把清除按钮单列
+    pass 
+if st.button("🗑️ 清除所有本地数据", type="secondary", use_container_width=True):
+    for file in ["experiment_details.csv", "experiment_summary.csv"]:
+        if os.path.exists(file): os.remove(file)
     st.rerun()
 
 # ==================== 实验说明 ====================
