@@ -1859,7 +1859,52 @@ with col3:
 st.divider()
 st.header("💬 对话历史")
 
-# ==================== 对话控制 ====================
+# ==================== 显示对话历史（移到输入框之前）====================
+if st.session_state.conversation_history:
+    # 人类欺凌者模式下按时间正序显示（新消息在下方），否则倒序
+    msgs_to_show = st.session_state.conversation_history[-15:]
+    if not st.session_state.human_bully_mode:
+        msgs_to_show = list(reversed(msgs_to_show))
+
+    # 使用一个带高度的容器实现滚动效果
+    chat_container = st.container(height=400)
+    with chat_container:
+        for msg in msgs_to_show:
+            with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
+                role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
+                display_role = role_map.get(msg['role'], msg['role'])
+
+                # 角色图标处理
+                if msg["role"] == "Bully" and st.session_state.human_bully_mode:
+                    role_icon, display_role = "👤", "人类被试 (您)"
+                elif msg["role"] == "System":
+                    role_icon = "⚙️"
+                else:
+                    role_icon = "🔥" if msg["role"] == "Bully" else "😢" if msg["role"] == "Victim" else "🛡️"
+
+                st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
+
+                # 单盲控制：人类模式下绝对隐藏独白
+                if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.human_bully_mode:
+                    st.markdown(f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>', unsafe_allow_html=True)
+
+                # 突出显示系统消息
+                if msg["role"] == "System":
+                    st.info(msg["content"])
+                else:
+                    st.markdown(msg["content"])
+
+                col_t1, col_t2 = st.columns(2)
+                with col_t1:
+                    st.caption(f"⏰ {msg.get('timestamp', '')}")
+                with col_t2:
+                    # 单盲控制：人类模式下绝对隐藏具体分数
+                    if msg["role"] == "Bully" and not st.session_state.human_bully_mode:
+                        st.caption(f"⚡ 攻击性: {msg.get('aggression_score',0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
+else:
+    st.info("对话历史为空，开始实验后显示对话记录。")
+
+# ==================== 对话控制（输入框在底部）====================
 if not st.session_state.experiment_started:
     st.info("👆 请点击侧边栏的'开始/继续实验'按钮开始实验")
 else:
@@ -2123,52 +2168,6 @@ if st.session_state.human_bully_mode and st.session_state.conversation_history:
                 lines.append(f"  [内心独白]: {msg['inner_thought']}")
         text = "\n\n".join(lines)
         st.download_button("下载对话文本", text, file_name=f"对话_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-
-# 显示对话历史
-# ==================== 显示对话历史 ====================
-if st.session_state.conversation_history:
-    st.subheader(f"📋 对话记录（共{len(st.session_state.conversation_history)}条）")
-    
-    # 👇 就是这一行 for 循环，刚才可能被不小心删掉了！
-    # 人类欺凌者模式下按时间正序显示（人类被试→受害者→治疗师），否则倒序
-    msgs_to_show = st.session_state.conversation_history[-15:]
-    if not st.session_state.human_bully_mode:
-        msgs_to_show = list(reversed(msgs_to_show))
-    for msg in msgs_to_show:
-        with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
-            role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
-            display_role = role_map.get(msg['role'], msg['role'])
-            
-            # 角色图标处理
-            if msg["role"] == "Bully" and st.session_state.human_bully_mode:
-                role_icon, display_role = "👤", "人类被试 (您)"
-            elif msg["role"] == "System":
-                role_icon = "⚙️"
-            else:
-                role_icon = "🔥" if msg["role"] == "Bully" else "😢" if msg["role"] == "Victim" else "🛡️"
-            
-            st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
-            
-            # 单盲控制：人类模式下绝对隐藏独白
-            if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.human_bully_mode:
-                st.markdown(f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>', unsafe_allow_html=True)
-            
-            # 突出显示系统消息
-            if msg["role"] == "System":
-                st.info(msg["content"])
-            else:
-                st.markdown(msg["content"])
-            
-            col_t1, col_t2 = st.columns(2)
-            with col_t1:
-                st.caption(f"⏰ {msg.get('timestamp', '')}")
-            with col_t2:
-                # 单盲控制：人类模式下绝对隐藏具体分数
-                if msg["role"] == "Bully" and not st.session_state.human_bully_mode:
-                    st.caption(f"⚡ 攻击性: {msg.get('aggression_score',0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
-            st.divider()
-else:
-    st.info("对话历史为空，开始实验后显示对话记录。")
 
 # ==================== 数据管理 ====================
 st.divider()
