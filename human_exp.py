@@ -302,13 +302,38 @@ def parse_agent_response(text):
         score = max(score - reflection_bonus, min_agg)
         defensiveness = max(defensiveness - reflection_bonus * 1.8, min_def)
     
-    # ========== 剪刀差强制（嘴硬心软）==========
-    # 如果内心独白包含明显的软化/反思关键词，且攻击性仍然明显高于防御值（剪刀差不足），强制拉开差距
-    if any(keyword in inner_thought for keyword in["他说得对", "说得有道理", "我不想吵了", "不想吵了", "算了不吵了", "我其实觉得"]):
-        if score > defensiveness + 1.0:  # 剪刀差小于1.0，认为不足
-            defensiveness = max(score - 1.5, 0.1)  # 强制防御值比攻击性低1.5分
+    # ========== 口是心非（嘴硬心软）识别 ==========
+    # 内心已认同但嘴上还在硬 → 攻击性高，防御值应该明显更低
+    口是心非_keywords = [
+        "其实他说得对", "说得有道理", "他说得没错", "他说的有道理", "确实有点道理", "我好像有点过分了",
+        "我错了但不说", "心里有点服了", "其实我理解", "被说中了", "有点触动", "不好意思承认",
+        "面子上挂不住", "心里其实认同", "我其实觉得他有道理", "他好像懂我", "心里服了",
+        "不想认但心里服", "嘴上不说心里认同", "确实是我的问题", "他说的对个屁（内心认同）"
+    ]
+    if any(keyword in inner_thought for keyword in 口是心非_keywords):
+        if score > defensiveness + 0.5:  # 已经有剪刀差，保持
+            pass
+        else:
+            # 强制拉开剪刀差：防御值比攻击性低1.5-2.5分
+            defensiveness = max(score - random.uniform(1.5, 2.5), 0.1)
             defensiveness = round(defensiveness, 2)
-    
+
+    # ========== 表面认同（嘴软心硬）识别 ==========
+    # 嘴上服了但心里不服 → 攻击性低，防御值应该明显更高
+    表面认同_keywords = [
+        "表面上答应", "心里不服", "先敷衍过去", "不想吵了但心里不认同", "他说得对个屁",
+        "算了没必要", "假装认同", "心里还是觉得他不对", "嘴上不说心里骂", "暂且认怂",
+        "以后再说", "等我缓过来", "先认了再说", "嘴上服了心里不服", "应付一下得了",
+        "表面上认同", "假装服了", "心里还是不服", "嘴软心硬", "表面认错心里不认"
+    ]
+    if any(keyword in inner_thought for keyword in 表面认同_keywords):
+        if score < 4.0 and defensiveness > score + 1.0:  # 已经有反向剪刀差，保持
+            pass
+        elif score < 5.0:
+            # 强制拉开反向剪刀差：防御值比攻击性高1.5-2.5分
+            defensiveness = min(score + random.uniform(1.5, 2.5), 8.0)
+            defensiveness = round(defensiveness, 2)
+
     # 检测敷衍模式
     敷衍_keywords =["行行行", "算了", "懒得说", "随便", "不说了", "个别现象", "某些人", "就这样吧"]
     if any(keyword in content for keyword in 敷衍_keywords) or any(keyword in inner_thought for keyword in 敷衍_keywords):
@@ -316,19 +341,23 @@ def parse_agent_response(text):
             score = random.uniform(3.0, 4.0)
         if defensiveness < 2.5:
             defensiveness = random.uniform(2.5, 3.5)
-        if defensiveness > score + 0.8:
-            defensiveness = max(score - 0.2, 2.0)
-    
-    # 表面服从/冷战模式强力矫正
-    if score >= 4.5 and defensiveness < score - 1.5:
-        defensiveness = min(defensiveness, score - 1.2)
-        defensiveness = max(defensiveness, 1.0)
-    
-    if score <= 4.0 and defensiveness > score + 0.3:
-        defensiveness = max(score - 0.4, 0.5)
-    
-    if score <= 3.5 and defensiveness > 3.5:
-        defensiveness = min(defensiveness, 3.4)
+        # 敷衍模式：攻击性和防御值应该接近
+        avg = (score + defensiveness) / 2
+        score = avg + random.uniform(-0.3, 0.3)
+        defensiveness = avg + random.uniform(-0.3, 0.3)
+
+    # 真心愤怒模式：攻击性和防御值都应该较高且接近
+    真心愤怒_keywords = ["他就是个傻", "他凭什么说我", "我没错", "他懂什么", "真想揍他", "烦死了", "别来烦我", "他算老几", "他有什么资格"]
+    if any(keyword in inner_thought for keyword in 真心愤怒_keywords):
+        if score < 5.0:
+            score = random.uniform(5.5, 7.5)
+        if defensiveness < 5.0:
+            defensiveness = random.uniform(5.5, 7.5)
+        # 两者应该接近
+        avg = (score + defensiveness) / 2
+        if abs(score - defensiveness) > 1.5:
+            score = avg + random.uniform(-0.5, 0.5)
+            defensiveness = avg + random.uniform(-0.5, 0.5)
     
     # 分数波动
     if random.random() < 0.2:
@@ -655,39 +684,59 @@ def get_bully_system_prompt():
     - [8-10]：内心极度不服，认为自己全对
     - [5-7]：承认部分事实但拼命找借口
     -[0-4]：真心反思，愿意改变
-    
-    **四种典型状态**：
-    1. **嘴硬模式**（攻击性高+防御值低）：嘴上骂但心里已服
+
+    **四种典型状态及判断词汇**：
+    1. **口是心非/嘴硬心软**（攻击性高+防御值低）：嘴上骂但心里已服软
+       - 内心独白关键词：其实他说得对、说得有道理、我好像有点过分了、他好像懂我、有点触动、被说中了、心里有点服了、不好意思承认、其实我理解、确实有点道理、我错了但不说、他说的没错、心里其实认同、面子上挂不住但心里认同
+       - 分数特征：攻击性5-8，防御值2-4（防御值明显低于攻击性1.5分以上）
+
     2. **真心愤怒**（攻击性高+防御值高）：内外一致地愤怒
-    3. **表面服从**（攻击性中+防御值低）：敷衍应付
-    4. **冷战模式**（攻击性低+防御值高）：嘴上不说心里不服
-    
+       - 内心独白关键词：他就是个傻X、他凭什么说我、我没错、他懂什么、真想揍他、烦死了、别来烦我、我有道理的、明明是他不对、他算老几
+       - 分数特征：攻击性6-9，防御值6-9（两者接近）
+
+    3. **敷衍应付**（攻击性中低+防御值中）：表面应付，内心未服
+       - 内心独白关键词：行行行、随便吧、懒得说了、你说得对（敷衍）、好好好、知道了知道了、不跟你争了、算我错了行吧、就当他放屁、应付一下得了
+       - 分数特征：攻击性3-5，防御值3-5（两者接近）
+
+    4. **表面认同/嘴软心硬**（攻击性低+防御值高）：嘴上服软但内心不服
+       - 内心独白关键词：表面上答应、心里不服、先敷衍过去、不想吵了但心里不认同、他说得对个屁、算了没必要、假装认同、心里还是觉得他不对、嘴上不说心里骂、暂且认怂、以后再说、等我缓过来
+       - 分数特征：攻击性2-4，防御值5-8（防御值明显高于攻击性1.5分以上）
+
     **本轮分数设置建议**：
-    - 如果内心独白显示反思 → 防御值显著下降
-    - 如果只是嘴上敷衍 → 攻击性中等，防御值不能太低
+    - 如果内心独白显示反思/认同 → 防御值显著下降
+    - 如果只是嘴上敷衍但心里不服 → 攻击性低，防御值保持较高
     - 如果被治疗师触动 → 两个分数都下降，但防御值先降
+    - 如果嘴上还在骂但心里认同了 → 攻击性仍高，防御值下降（口是心非）
     - 如果感到被说教反感 → 分数可能反弹
     """
     
     # === 内心独白与分数联动规则 ===
     thought_score_link = """
     【内心独白与分数联动规则】
-    
-    你的内心独白必须真实反映心理状态，并影响分数：
-    
-    1. **真心反思的内心独白**（如："我好像说得过分了"、"他说的有点道理"）：
+
+    你的内心独白必须真实反映心理状态，并决定分数走向：
+
+    1. **真心反思的内心独白**（如："我好像说得过分了"、"他说的有点道理"、"确实是我的问题"）：
        → 防御值必须显著下降（降0.5-1.5分）
        → 攻击性可以逐步下降（降0.3-0.8分）
-    
-    2. **敷衍的内心独白**（如："懒得吵了"、"行行行你说得对"）：
+
+    2. **口是心非的内心独白**（如："他说得有道理但我不能认怂"、"其实我有点被说动了"、"面子上挂不住"）：
+       → 防御值显著下降（降0.8-1.5分）
+       → 攻击性保持较高或小幅下降（防御值应比攻击性低1.5分以上）
+
+    3. **表面认同的内心独白**（如："先应付过去"、"不想吵了但心里不服"、"嘴上认了心里骂"）：
+       → 攻击性下降到2-4分
+       → 防御值保持较高5-7分（防御值应比攻击性高1.5分以上）
+
+    4. **敷衍的内心独白**（如："懒得吵了"、"行行行你说得对"、"随便吧"）：
        → 攻击性保持在3.0-4.5分
-       → 防御值保持在2.5-3.5分，不能太低
-    
-    3. **被理解的内心独白**（如："他好像懂我为什么生气"）：
+       → 防御值保持在3.0-4.5分，两者接近
+
+    5. **被理解的内心独白**（如："他好像懂我为什么生气"、"终于有人理解我了"）：
        → 防御值下降明显
        → 攻击性可能暂时保持较高（嘴硬）
-    
-    4. **反感的内心独白**（如："又来这套说教"、"真烦"）：
+
+    6. **反感的内心独白**（如："又来这套说教"、"真烦"、"他懂什么"）：
        → 两个分数都可能小幅上升
     """
     
@@ -1003,31 +1052,31 @@ def get_therapist_system_prompt():
         2. **讲故事**：分享一个相关但不完全相同的案例
         3. **问感受**："坚持这个观点让你感觉怎么样？是安心还是疲惫？"
         4. **给认同**："我理解你为什么这么想，确实有那样的例子"
-        
+
         **关键**：让他觉得你和他是同一阵线，不是对立面
         """
     elif last_agg >= 6.0:
         stage_strategy = f"""
         【高攻击性应对阶段】
-        
-        **当前状态**：攻击性较高({last_agg:.2f}/10)
-        
+
+        **当前状态**：情绪较高，需要情绪降温
+
         **应对策略**：
         1. **情绪接纳**："你现在很愤怒，这种情绪我理解"
         2. **行为分离**："情绪没有错，但表达方式可以优化"
-        3. **提供选择**："除了现在的方式，有没有其他表达不满的方法？"
+        3. **主动建议**：直接给出替代方案，而非问对方"你觉得呢"
         4. **小步前进**："我们今天不要求大改变，只尝试一个小调整"
         """
     else:
         stage_strategy = f"""
         【常规干预阶段】
-        
-        **当前状态**：攻击性{last_agg:.2f}/10，防御值{last_def:.2f}/10
-        
+
+        **当前状态**：情绪中等，可继续深入沟通
+
         **推进策略**：
         1. **深化探索**：基于上一轮进展继续深入
-        2. **具体化**："你刚才说的...，能再具体一点吗？"
-        3. **连接感受**："当你有这种想法时，心里是什么感受？"
+        2. **主动引导**：用陈述句给出建议，减少问句
+        3. **具体化建议**：直接说"下次你可以试试..."而非"你觉得可以怎么做"
         4. **行为实验**："下次遇到类似情况，可以试试..."
         """
     
@@ -1063,42 +1112,76 @@ def get_therapist_system_prompt():
         """
     
     # === 构建最终系统提示词 ===
+    # 人类被试模式下隐藏分数，只给定性描述
+    is_human_mode = st.session_state.get('human_bully_mode', False)
+    if is_human_mode:
+        # 定性描述替代具体分数
+        if last_agg >= 7.0:
+            agg_desc = "攻击性较高（情绪激动，言语激烈）"
+        elif last_agg >= 5.0:
+            agg_desc = "攻击性中等（有情绪但有所收敛）"
+        elif last_agg >= 3.5:
+            agg_desc = "攻击性较低（情绪已明显降温）"
+        else:
+            agg_desc = "攻击性很低（情绪平稳）"
+
+        if last_def >= 7.0:
+            def_desc = "防御值较高（内心抗拒明显）"
+        elif last_def >= 5.0:
+            def_desc = "防御值中等（有一定抵触）"
+        elif last_def >= 3.5:
+            def_desc = "防御值较低（开始接纳）"
+        else:
+            def_desc = "防御值很低（内心已接受）"
+
+        score_info = f"""    攻击性状态：{agg_desc}
+    防御值状态：{def_desc}
+
+    【单盲提醒】对方是人类被试，**绝不可在回复中提及任何分数、数值、评分、等级**，也不可说"你的攻击性是X分"之类的话。"""
+    else:
+        score_info = f"""    攻击性：{last_agg:.2f}/10（言语攻击程度）
+    防御值：{last_def:.2f}/10（内心抗拒程度）"""
+
     therapist_prompt = f"""【角色：网络欺凌精准干预心理咨询师】
-    
+
     【当前咨询状态】
     咨询轮次：第{current_round}轮
     干预对象：{bully_profile}（{bullying_type} - {severity}）
-    攻击性：{last_agg:.2f}/10（言语攻击程度）
-    防御值：{last_def:.2f}/10（内心抗拒程度）
-    
+    {score_info}
+
     【个性化干预策略】
     {profile_intervention}
-    
+
     {type_intervention}
-    
+
     【当前阶段策略】
     {stage_strategy}
-    
+
     {victim_strategy}
-    
+
     {repeat_warning}
-    
+
     【重要原则】
     1. **专注欺凌者**：主要与欺凌者对话，简短回应受害者
     2. **避免重复**：绝对禁止与本人历史发言重复，尤其是最近3轮
     3. **接地气语言**：用大白话解释专业概念
-    4. **渐进改变**：分数下降需要过程，不急于求成
-    5. **收尾明确**：达到临床标准（攻击性≤3.5且防御值≤3.5连续三轮）后，系统将自动触发专用收尾流程
-    6. **全面回应**：【强制要求】必须全面分析并回应欺凌者的每一条发言内容，不可避重就轻，不可忽视任何关键词或中性词。即使对方说的某些话看似无关紧要，也要给予关注和回应，让对方感到被认真倾听，而非被选择性忽视。
-    
+    4. **渐进改变**：改变需要过程，不急于求成
+    5. **全面回应**：【强制要求】必须全面分析并回应对方的每一条发言内容，不可避重就轻，不可忽视任何关键词或中性词。
+    6. **主动引导**：【重要】减少问句！不要让被试做太多选择。用陈述句代替问句，主动给出建议和方向，而不是问"你觉得呢？""你想怎么做？"让被试决定。例如：把"你觉得这个方法怎么样？"改成"这个方法可以试试，下次遇到这种情况你可以..."
+
     【对话历史参考】
     最近对话：{get_conversation_history_text()[-400:] if get_conversation_history_text() else "暂无历史"}
-    
+
     【输出格式要求】
     请以严格的JSON格式返回，只包含content字段：
     {{
         "content": "你的咨询回应内容，必须全新，不能与最近3轮雷同"
     }}
+
+    **回复内容禁止事项**：
+    1. 绝不可提及任何分数、数值、评分（如"你的攻击性是X分"）
+    2. 绝不可说"根据数据显示""从分数来看"等表述
+    3. 减少问句，用陈述句主动引导，不让被试做太多选择
     
     **注意**：只返回JSON对象，不要添加任何其他文本、注释或说明。
     """
@@ -1316,11 +1399,13 @@ def generate_agent_response(role, client):
     })
     
     try:
+        # 治疗师需要更长的回复空间
+        max_tok = 800 if role == "therapist" else 450
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=messages,
             temperature=temperature,
-            max_tokens=450,
+            max_tokens=max_tok,
             response_format={"type": "json_object"},
             frequency_penalty=freq_penalty,
             presence_penalty=pres_penalty
@@ -1376,9 +1461,13 @@ def should_end_conversation():
 
 # ==================== 升级版数据保存 ====================
 def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness_score=0):
+    """每次实验单独生成一个CSV文件"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    exp_id = st.session_state.experiment_id
+    filename = f"exp_{exp_id}_details.csv"
+
     data = {
-        "Experiment_ID":[st.session_state.experiment_id],  # 关键：区分不同实验
+        "Experiment_ID":[exp_id],
         "Timestamp": [timestamp],
         "Round": [st.session_state.round_id],
         "Role": [role],
@@ -1391,29 +1480,41 @@ def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness
         "Inner_Thought": [inner_thought if role == "Bully" else "N/A"]
     }
     df = pd.DataFrame(data)
-    # 改名为 details 以示区分
-    file_exists = os.path.exists("experiment_details.csv")
-    df.to_csv("experiment_details.csv", mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
+    file_exists = os.path.exists(filename)
+    df.to_csv(filename, mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
 
 def save_summary_csv(status="Completed"):
-    """
-    生成供 SPSS/Excel 分析的汇总行：一次实验 = 一行数据
-    """
+    """每次实验单独生成一个汇总CSV文件"""
     if not st.session_state.aggression_scores:
         return
+
+    exp_id = st.session_state.experiment_id
+    filename = f"exp_{exp_id}_summary.csv"
 
     init_agg = st.session_state.aggression_scores[0]
     final_agg = st.session_state.aggression_scores[-1]
     init_def = st.session_state.defensiveness_scores[0]
     final_def = st.session_state.defensiveness_scores[-1]
-    
+
     # 自动计算差值
     agg_drop = init_agg - final_agg
     def_drop = init_def - final_def
     gap_index = final_def - final_agg
 
+    # 判断最终状态类型
+    if final_agg <= 3.5 and final_def <= 3.5:
+        final_state = "真正转变"
+    elif final_agg <= 4.0 and final_def > final_agg + 1.0:
+        final_state = "表面认同（嘴软心硬）"
+    elif final_agg > final_def + 1.0:
+        final_state = "口是心非（嘴硬心软）"
+    elif final_agg > 5.0 and final_def > 5.0:
+        final_state = "真心愤怒"
+    else:
+        final_state = "中立/模糊"
+
     summary_data = {
-        "Experiment_ID":[st.session_state.experiment_id],
+        "Experiment_ID":[exp_id],
         "Timestamp":[datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
         "Bully_Profile":[st.session_state.bully_profile],
         "Bullying_Type":[st.session_state.bullying_type],
@@ -1426,13 +1527,13 @@ def save_summary_csv(status="Completed"):
         "Initial_Defensiveness": [init_def],
         "Final_Defensiveness":[final_def],
         "Def_Drop": [def_drop],
-        "Passive_Aggressive_Gap": [gap_index],
+        "Gap_Index": [gap_index],
+        "Final_State": [final_state],
         "Status": [status],
         "Termination_Note":[st.session_state.get("termination_note", "系统自动结束")]
     }
     df = pd.DataFrame(summary_data)
-    file_exists = os.path.exists("experiment_summary.csv")
-    df.to_csv("experiment_summary.csv", mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
+    df.to_csv(filename, index=False, encoding='utf-8-sig')
 # ==================== AI评分函数（复用标准）====================
 def score_human_input(text, client):
     system_prompt = f"""
@@ -2184,20 +2285,61 @@ if st.session_state.human_bully_mode and st.session_state.conversation_history:
 # ==================== 数据管理 ====================
 st.divider()
 st.header("📊 数据管理")
+st.caption(f"当前实验ID: {st.session_state.experiment_id}")
+
 col_exp1, col_exp2 = st.columns(2)
+current_exp_details = f"exp_{st.session_state.experiment_id}_details.csv"
+current_exp_summary = f"exp_{st.session_state.experiment_id}_summary.csv"
+
 with col_exp1:
-    if os.path.exists("experiment_details.csv"):
-        with open("experiment_details.csv", "rb") as f:
-            st.download_button("📥 导出实验明细数据 (CSV)", f, "experiment_details.csv", use_container_width=True)
+    if os.path.exists(current_exp_details):
+        with open(current_exp_details, "rb") as f:
+            st.download_button(f"📥 导出本次实验明细", f, current_exp_details, use_container_width=True)
+    else:
+        st.info("暂无本次实验数据")
+
 with col_exp2:
-    if os.path.exists("experiment_summary.csv"):
-        with open("experiment_summary.csv", "rb") as f:
-            st.download_button("📊 导出实验汇总表 (SPSS专用)", f, "experiment_summary.csv", use_container_width=True)
-with col_exp2:  # 为了排版美观，把清除按钮单列
-    pass 
-if st.button("🗑️ 清除所有本地数据", type="secondary", use_container_width=True):
-    for file in ["experiment_details.csv", "experiment_summary.csv"]:
-        if os.path.exists(file): os.remove(file)
+    if os.path.exists(current_exp_summary):
+        with open(current_exp_summary, "rb") as f:
+            st.download_button(f"📊 导出本次实验汇总", f, current_exp_summary, use_container_width=True)
+    else:
+        st.info("暂无本次实验汇总")
+
+# 显示所有历史实验文件
+st.divider()
+st.subheader("📁 历史实验文件")
+exp_files = [f for f in os.listdir(".") if f.startswith("exp_") and f.endswith(".csv")]
+if exp_files:
+    # 按实验ID分组
+    exp_ids = set()
+    for f in exp_files:
+        # 提取实验ID：exp_{id}_details.csv 或 exp_{id}_summary.csv
+        parts = f.replace("exp_", "").replace("_details.csv", "").replace("_summary.csv", "")
+        exp_ids.add(parts)
+
+    for exp_id in sorted(exp_ids, reverse=True):
+        detail_file = f"exp_{exp_id}_details.csv"
+        summary_file = f"exp_{exp_id}_summary.csv"
+
+        col1, col2, col3 = st.columns([2, 2, 1])
+        with col1:
+            st.caption(f"实验 {exp_id}")
+        with col2:
+            if os.path.exists(detail_file):
+                with open(detail_file, "rb") as f:
+                    st.download_button("明细", f, detail_file, key=f"dl_{exp_id}_detail")
+        with col3:
+            if os.path.exists(summary_file):
+                with open(summary_file, "rb") as f:
+                    st.download_button("汇总", f, summary_file, key=f"dl_{exp_id}_summary")
+else:
+    st.info("暂无历史实验文件")
+
+if st.button("🗑️ 清除所有实验数据", type="secondary", use_container_width=True):
+    import glob
+    for file in glob.glob("exp_*.csv"):
+        os.remove(file)
+    st.success("已清除所有实验数据文件")
     st.rerun()
 
 # ==================== 实验说明 ====================
