@@ -1078,8 +1078,6 @@ def get_therapist_system_prompt():
     3. **接地气语言**：用大白话解释专业概念
     4. **渐进改变**：分数下降需要过程，不急于求成
     5. **收尾明确**：达到临床标准（攻击性≤3.5且防御值≤3.5连续三轮）后，系统将自动触发专用收尾流程
-    6. **禁止剧本泄漏**：你是在发微信文字！**绝对不允许**输出任何带有括号的心理学分析、技术名称或分数评估（如 `(结合CBT)`、`(攻击性下降)`、`(先跟后带)`）。
-    7. **禁止动作描写**：不要输出 `对Bully说：` 或 `对Victim说：`，直接说出你的台词。
     
     【对话历史参考】
     最近对话：{get_conversation_history_text()[-400:] if get_conversation_history_text() else "暂无历史"}
@@ -1318,19 +1316,6 @@ def generate_agent_response(role, client):
         
         response_text = response.choices[0].message.content
         content, aggression_score, defensiveness_score, inner_thought = parse_agent_response(response_text)
-
-        # ========== 【新增：治疗师强制防泄漏清洗】 ==========
-        if role == "therapist":
-            # 1. 暴力清除所有包含专业术语和分数的括号内容
-            content = re.sub(r'[（\(][^）\)]*(技术|理论|策略|攻击性|防御值|结合|引导|分析|潜台词|简要|目标|评估|受害者|Bully|Victim|分数|降低|效应)[^）\)]*[）\)]', '', content)
-            # 2. 清除暴露的分数（无括号情况）
-            content = re.sub(r'攻击性.*?\d+.*?防御值.*?\d+.*', '', content)
-            # 3. 清除 "对Bully说：" 这类动作描写
-            content = re.sub(r'对(Bully|Victim|欺凌者|受害者)[:：]\s*', '', content, flags=re.IGNORECASE)
-            # 4. 清理残留的多余换行
-            content = re.sub(r'\n\s*\n', '\n\n', content).strip()
-        # ====================================================
-
         
         # 第一轮欺凌者分数强制范围
         if role == "bully" and st.session_state.round_id == 1:
@@ -2145,7 +2130,11 @@ if st.session_state.conversation_history:
     st.subheader(f"📋 对话记录（共{len(st.session_state.conversation_history)}条）")
     
     # 👇 就是这一行 for 循环，刚才可能被不小心删掉了！
-    for msg in reversed(st.session_state.conversation_history[-15:]):
+    # 人类欺凌者模式下按时间正序显示（人类被试→受害者→治疗师），否则倒序
+    msgs_to_show = st.session_state.conversation_history[-15:]
+    if not st.session_state.human_bully_mode:
+        msgs_to_show = list(reversed(msgs_to_show))
+    for msg in msgs_to_show:
         with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
             role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
             display_role = role_map.get(msg['role'], msg['role'])
