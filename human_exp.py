@@ -193,6 +193,17 @@ def parse_agent_response(text):
         d_match = re.search(r'"defensiveness":\s*(\d+(\.\d+)?)', text)
         defensiveness = float(d_match.group(1)) if d_match else score
 
+    # ========== 绝对屏蔽思考痕迹 ==========
+    # 过滤各种思考标签格式：<think...</think》、【思考】...、<lemma_think>...</lemma_think> 等
+    content = re.sub(r'<think[^>]*>.*?</think\s*>', '', content, flags=re.IGNORECASE | re.DOTALL)
+    content = re.sub(r'<lemma_think[^>]*>.*?</lemma_think\s*>', '', content, flags=re.IGNORECASE | re.DOTALL)
+    content = re.sub(r'【思考】.*?【/思考】', '', content, flags=re.DOTALL)
+    content = re.sub(r'【思考】.*$', '', content, flags=re.DOTALL)
+    content = re.sub(r'\[思考\].*?\[/思考\]', '', content, flags=re.DOTALL)
+    content = re.sub(r'思维链[：:].{0,200}', '', content)
+    content = re.sub(r'^.*?[，,]?\s*(我|首先|那么|好的)[^。]{0,50}(分析|理解|思考|来看)[。]?$', '', content, flags=re.MULTILINE)
+    content = content.strip()
+
     # 获取当前配置
     bully_profile = st.session_state.bully_profile
     bullying_type = st.session_state.bullying_type
@@ -1078,6 +1089,7 @@ def get_therapist_system_prompt():
     3. **接地气语言**：用大白话解释专业概念
     4. **渐进改变**：分数下降需要过程，不急于求成
     5. **收尾明确**：达到临床标准（攻击性≤3.5且防御值≤3.5连续三轮）后，系统将自动触发专用收尾流程
+    6. **全面回应**：【强制要求】必须全面分析并回应欺凌者的每一条发言内容，不可避重就轻，不可忽视任何关键词或中性词。即使对方说的某些话看似无关紧要，也要给予关注和回应，让对方感到被认真倾听，而非被选择性忽视。
     
     【对话历史参考】
     最近对话：{get_conversation_history_text()[-400:] if get_conversation_history_text() else "暂无历史"}
