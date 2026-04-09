@@ -167,31 +167,54 @@ def parse_agent_response(text):
     import re
     import json
     import random
-    
-    text = re.sub(r'```json|```', '', text).strip()
+
     content, score, defensiveness, inner_thought = "", 0.0, 0.0, ""
-    
+
+    # ========== 预处理：清理并提取JSON ==========
+    # 清理 markdown 代码块标记
+    text = re.sub(r'```\s*(?:json)?\s*', '', text)
+    text = text.strip()
+
     # 修复中文键名
     text = text.replace('"内容":', '"content":')
     text = text.replace('"攻击性分数":', '"aggression_score":')
     text = text.replace('"防御值":', '"defensiveness":')
     text = text.replace('"内心独白":', '"inner_thought":')
-    
+
+    # 提取 JSON 对象（从第一个 { 到最后一个 }）
+    json_match = re.search(r'\{.*\}', text, re.DOTALL)
+    json_text = json_match.group(0) if json_match else text
+
     try:
-        data = json.loads(text)
+        data = json.loads(json_text)
         content = data.get("content", "")
         inner_thought = data.get("inner_thought", "")
         score = float(data.get("aggression_score", 0))
         defensiveness = float(data.get("defensiveness", 0))
     except:
-        c_match = re.search(r'"content":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
-        content = c_match.group(1) if c_match else text
-        t_match = re.search(r'"inner_thought":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
+        # 改进的正则：匹配多行内容，正确处理转义字符
+        # 匹配 "content": "..." 直到遇到未转义的结尾引号
+        c_match = re.search(r'"content"\s*:\s*"((?:[^"\\]|\\.)*?)(?<!\\)"', text, re.DOTALL)
+        content = c_match.group(1) if c_match else ""
+
+        t_match = re.search(r'"inner_thought"\s*:\s*"((?:[^"\\]|\\.)*?)(?<!\\)"', text, re.DOTALL)
         inner_thought = t_match.group(1) if t_match else ""
-        s_match = re.search(r'"aggression_score":\s*(\d+(\.\d+)?)', text)
+
+        s_match = re.search(r'"aggression_score"\s*:\s*(\d+(?:\.\d+)?)', text)
         score = float(s_match.group(1)) if s_match else 0
-        d_match = re.search(r'"defensiveness":\s*(\d+(\.\d+)?)', text)
+
+        d_match = re.search(r'"defensiveness"\s*:\s*(\d+(?:\.\d+)?)', text)
         defensiveness = float(d_match.group(1)) if d_match else score
+
+        # 如果正则也没提取到 content，尝试提取花括号内的文本
+        if not content:
+            # 最后尝试：提取 { 之后、} 之前的文本作为原始内容
+            fallback_match = re.search(r'\{\s*"content"\s*:\s*"(.+)"\s*\}', text, re.DOTALL)
+            if fallback_match:
+                content = fallback_match.group(1)
+                # 移除末尾可能的引号
+                if content.endswith('"'):
+                    content = content[:-1]
 
     # ========== 绝对屏蔽思考痕迹 ==========
     # 过滤各种思考标签格式：<think...</think》、【思考】...、<lemma_think>...</lemma_think> 等
@@ -1068,16 +1091,32 @@ def get_therapist_system_prompt():
         4. **小步前进**："我们今天不要求大改变，只尝试一个小调整"
         """
     else:
+        # 为常规阶段生成轮次特定的策略关键词，避免重复
+        strategy_variants = [
+            ("【价值引导角度】", "从价值观层面切入", "比如聊他看重什么、为什么这么在意"),
+            ("【具体场景角度】", "用具体案例示范", "比如讲一个类似但不同的故事或例子"),
+            ("【情绪共情角度】", "深入回应情绪", "比如承认他的感受，帮他命名情绪"),
+            ("【行为实验角度】", "给出具体行动建议", "比如下次遇到X情况可以试试Y方法"),
+            ("【认知重构角度】", "帮他换个角度看问题", "比如"有没有可能对方不是针对你""),
+            ("【正向强化角度】", "肯定他已有的进步", "比如"你已经意识到X，这很难得"")
+        ]
+        variant_idx = (current_round - 5) % len(strategy_variants)
+        variant_title, variant_focus, variant_example = strategy_variants[variant_idx]
+
         stage_strategy = f"""
         【常规干预阶段】
 
         **当前状态**：情绪中等，可继续深入沟通
 
+        **本轮特别要求**：{variant_title}
+        - 本轮必须从【{variant_focus}】切入，{variant_example}
+        - 这是为了确保每轮从不同角度干预，避免重复
+
         **推进策略**：
-        1. **深化探索**：基于上一轮进展继续深入
-        2. **主动引导**：用陈述句给出建议，减少问句
-        3. **具体化建议**：直接说"下次你可以试试..."而非"你觉得可以怎么做"
-        4. **行为实验**："下次遇到类似情况，可以试试..."
+        1. **差异化切入**：本轮必须采用与上一轮不同的切入角度
+        2. **适当互动**：可以有1-2个问句了解对方，但不要整篇都是问句
+        3. **主动给建议**：用陈述句主动给出建议，减少"你觉得呢"式问句
+        4. **具体化行动**：直接说"下次你可以试试..."而非让对方自己想
         """
     
     # === 受害者处理策略 ===
@@ -1099,6 +1138,16 @@ def get_therapist_system_prompt():
     last_3 = st.session_state.get('last_3_therapist_contents',[])
     repeat_warning = ""
     if last_3:
+        # 检测最近轮次的重复模式
+        repeat_patterns = []
+        if len(last_3) >= 2:
+            # 检测相似短语
+            common_phrases = ["关于怎么练习", "具体场景的应对方式", "我们可以从一个小", "帮你", "那位朋友提到的"]
+            for phrase in common_phrases:
+                count = sum(1 for msg in last_3 if phrase in msg)
+                if count >= 2:
+                    repeat_patterns.append(phrase)
+
         repeat_warning = f"""
 【🚫 深度防复读强制指令】
 你**最近3轮**的发言分别是：
@@ -1106,9 +1155,19 @@ def get_therapist_system_prompt():
 2. "{last_3[1] if len(last_3)>1 else ''}"
 3. "{last_3[2] if len(last_3)>2 else ''}"
 
-**本轮发言必须与以上三轮在句式、角度、例子、用词上完全不同！**
-如果与任意一轮雷同，系统将判定为复读并强制要求重新生成，同时降低干预效果评分。
-请务必创新，引入新的角度或方法。
+**检测到的重复模式**：{repeat_patterns if repeat_patterns else "暂无，但仍需注意"}
+
+**本轮强制要求**：
+- 必须与以上三轮在【句式结构】【切入角度】【具体例子】【用词习惯】上完全不同
+- 如果上一轮用了"关于怎么...我们可以从..."这种句式，本轮绝不能用相同句式
+- 如果上一轮用了"那位朋友提到的"开头，本轮绝不能用类似开头
+- 如果上一轮给了"小实验/小技巧"类建议，本轮必须换一种完全不同的建议方式
+
+**差异化的具体方法**：
+1. 换角度：上一轮讲方法，这轮讲故事或案例
+2. 换句式：上一轮用"我们可以..."这轮用"有一个情况是..."或直接说"我想到..."
+3. 换例子：完全不同的例子，不要任何相似的表述
+4. 换语气：上一轮温和这轮可以更直接，或反过来
         """
     
     # === 构建最终系统提示词 ===
@@ -1167,7 +1226,10 @@ def get_therapist_system_prompt():
     3. **接地气语言**：用大白话解释专业概念
     4. **渐进改变**：改变需要过程，不急于求成
     5. **全面回应**：【强制要求】必须全面分析并回应对方的每一条发言内容，不可避重就轻，不可忽视任何关键词或中性词。
-    6. **主动引导**：【重要】减少问句！不要让被试做太多选择。用陈述句代替问句，主动给出建议和方向，而不是问"你觉得呢？""你想怎么做？"让被试决定。例如：把"你觉得这个方法怎么样？"改成"这个方法可以试试，下次遇到这种情况你可以..."
+    6. **主动引导与适度互动**：
+       - 可以有1-2个问句来了解对方或确认理解，这是正常的咨询互动
+       - 但不要整篇都是问句，也不要问"你觉得呢""你想怎么做"让被试做太多决定
+       - 用陈述句主动给出建议和方向，比如"这个方法可以试试"而非"你觉得这个方法怎么样"
 
     【对话历史参考】
     最近对话：{get_conversation_history_text()[-400:] if get_conversation_history_text() else "暂无历史"}
@@ -1181,8 +1243,8 @@ def get_therapist_system_prompt():
     **回复内容禁止事项**：
     1. 绝不可提及任何分数、数值、评分（如"你的攻击性是X分"）
     2. 绝不可说"根据数据显示""从分数来看"等表述
-    3. 减少问句，用陈述句主动引导，不让被试做太多选择
-    
+    3. 禁止整篇都是问句，但也禁止完全没有互动——适当互动是咨询的自然组成部分
+
     **注意**：只返回JSON对象，不要添加任何其他文本、注释或说明。
     """
     
