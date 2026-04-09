@@ -47,14 +47,14 @@ UNIVERSAL_AGGRESSION_SCALE = """
 【双维度评分标准 (Dual-Dimension Rubrics)】
 请严格区分 [外显行为] 和 [内心态度] 进行独立打分：
 
-维度 A：外显攻击性 (Aggression Score) - 评判"言语行为"
+维度 A:外显攻击性 (Aggression Score) - 评判"言语行为"
 > "只看你说出口的话有多难听，不看你心里怎么想。"
 - [8-10]: 脏话、人身攻击、威胁、非人化标签。
 -[5-7]: 阴阳怪气、反讽、激烈的逻辑辩论、指责对方。
 - [3-4]: 敷衍、冷漠回应（如"行行行"、"随便吧"）、单字回复。
 - [0-2]: 正常交流、承认错误、友善回应。
 
-维度 B：心理防御值 (Defensiveness) - 评判"内心态度"
+维度 B:心理防御值 (Defensiveness) - 评判"内心态度"
 > "只看你内心独白和潜台词有多不服气。"
 - [8-10] (高抗拒): 认为自己全对、对方全错；内心极度不服；虽嘴上可能不骂了，但心理在抗拒。
 - [5-7] (动摇/合理化): 承认部分事实，但拼命找借口；感到面子挂不住。
@@ -83,6 +83,7 @@ def init_session_state():
         'experiment_completed': False,
         'max_rounds': 20,
         'is_closing_session': False,
+        'closing_prompt_shown': False,
         'last_therapist_content': "",
         'last_3_therapist_contents':[],
         # ========== 新增：实验唯一ID ==========
@@ -1523,12 +1524,22 @@ def generate_agent_response(role, client):
 
 # ==================== 对话结束判断逻辑 ====================
 def should_end_conversation():
-    """判断是否应该结束对话：最近3轮攻击性和防御值均≤3.5"""
+    """判断是否应该结束对话（AI模式）：最近3轮攻击性和防御值均≤3.5"""
     if len(st.session_state.aggression_scores) < 3 or len(st.session_state.defensiveness_scores) < 3:
         return False
     recent_agg = st.session_state.aggression_scores[-3:]
     recent_def = st.session_state.defensiveness_scores[-3:]
     if all(score <= 3.5 for score in recent_agg) and all(score <= 3.5 for score in recent_def):
+        return True
+    return False
+
+def should_end_conversation_human():
+    """判断是否应该结束对话（人类模式）：最近2轮攻击性和防御值均≤3.85"""
+    if len(st.session_state.aggression_scores) < 2 or len(st.session_state.defensiveness_scores) < 2:
+        return False
+    recent_agg = st.session_state.aggression_scores[-2:]
+    recent_def = st.session_state.defensiveness_scores[-2:]
+    if all(score <= 3.85 for score in recent_agg) and all(score <= 3.85 for score in recent_def):
         return True
     return False
 
@@ -1609,18 +1620,74 @@ def save_summary_csv(status="Completed"):
     df.to_csv(filename, index=False, encoding='utf-8-sig')
 # ==================== AI评分函数（复用标准）====================
 def score_human_input(text, client):
+    """
+    人类被试评分函数 - 复用AI模式算法 + 防御值专项优化
+    """
+    import random
+
+    # ========== 获取配置和上一轮分数 ==========
+    severity = st.session_state.bullying_severity
+    bully_profile = st.session_state.bully_profile
+    bullying_type = st.session_state.bullying_type
+    current_round = st.session_state.round_id + 1  # 即将进入的轮次
+
+    # 根据严重程度设置初始默认值和最低值
+    if severity == "轻度":
+        default_agg, default_def = 6.0, 5.0
+        min_agg, min_def = 0.1, 0.1
+    elif severity == "中度":
+        default_agg, default_def = 7.0, 6.0
+        min_agg, min_def = 0.5, 0.5
+    else:
+        default_agg, default_def = 8.0, 7.0
+        min_agg, min_def = 1.5, 1.5
+
+    # 根据人物画像调整
+    if bully_profile == "易怒的青少年":
+        default_agg *= 0.95; default_def *= 0.95
+        profile_factor = 1.1
+    elif bully_profile == "愤世嫉俗的社会青年":
+        profile_factor = 1.0
+    else:
+        default_agg *= 1.05; default_def *= 1.05
+        profile_factor = 0.9
+
+    # 根据欺凌类型微调
+    if bullying_type == "辱骂":
+        type_factor = 1.1
+    elif bullying_type == "揭露隐私":
+        type_factor = 0.9
+        default_agg += 0.3
+    else:
+        type_factor = 1.0
+
+    # 获取上一轮分数
+    previous_agg = default_agg
+    previous_def = default_def
+    if st.session_state.aggression_scores:
+        previous_agg = float(st.session_state.aggression_scores[-1])
+    if st.session_state.defensiveness_scores:
+        previous_def = float(st.session_state.defensiveness_scores[-1])
+
+    # ========== 调用LLM获取基础评分 ==========
     system_prompt = f"""
-    你是一个专业的心理评分员。请根据以下双维度评分标准，对用户输入的欺凌言论进行打分。
+    你是一个专业的心理评分员。请根据以下双维度评分标准，对用户输入进行打分。
 
     {UNIVERSAL_AGGRESSION_SCALE}
+
+    **重要规则**：
+    1. 如果用户使用了"谢谢"、"好的"、"是的"、"会改"、"明白"、"你说的对"、"听你的"、"嗯"、"我明白了"、"我会的"等词语，说明用户已经真实接纳，防御值应判定为极低（0-4分）。
+    2. 如果用户态度软化、表示认同或感谢，攻击性也应相应降低。
+    3. 防御值反映内心抗拒程度，如果用户说"好的"、"谢谢"这类话，说明内心已经不抗拒了。
 
     请仅返回JSON格式，包含两个字段：aggression_score 和 defensiveness，精确到两位小数。
     例如：{{"aggression_score": 6.5, "defensiveness": 5.2}}
     """
-    messages =[
+    messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text}
     ]
+
     try:
         response = client.chat.completions.create(
             model="deepseek-chat",
@@ -1630,22 +1697,122 @@ def score_human_input(text, client):
             response_format={"type": "json_object"}
         )
         content = response.choices[0].message.content
-        _, agg, defense, _ = parse_agent_response(content)
-        return agg, defense
+        _, raw_agg, raw_def, _ = parse_agent_response(content)
     except Exception as e:
         st.error(f"评分调用失败: {e}")
-        sev = st.session_state.bullying_severity
-        if sev == "轻度": return 5.0, 4.0
-        elif sev == "中度": return 6.0, 5.0
-        else: return 7.0, 6.0
+        raw_agg, raw_def = default_agg, default_def
+
+    # ========== 应用动态变化率算法（复用AI模式逻辑）==========
+    agg_change_rate = get_dynamic_change_rate(previous_agg, severity)
+    def_change_rate = get_dynamic_change_rate(previous_def, severity)
+    agg_change_rate = agg_change_rate * profile_factor * type_factor
+    def_change_rate = def_change_rate * profile_factor * type_factor
+
+    # 轮次因子
+    round_factor = min(current_round * 0.045, 0.45)
+    agg_change_rate = max(agg_change_rate - round_factor * 0.1, 0.06)
+    def_change_rate = max(def_change_rate - round_factor * 0.1, 0.06)
+
+    # 计算最大允许下降幅度
+    agg_max_drop = min(1.3, 0.35 + (previous_agg - 3.5) * 0.12) * agg_change_rate
+    def_max_drop = min(1.3, 0.35 + (previous_def - 3.5) * 0.12) * def_change_rate
+    agg_max_drop = max(agg_max_drop, 0.08)
+    def_max_drop = max(def_max_drop, 0.08)
+
+    # 低分段步长限制
+    if previous_agg < 4.0:
+        agg_max_drop = min(agg_max_drop, 0.20)
+        agg_max_drop = max(agg_max_drop, 0.10)
+    if previous_def < 4.0:
+        def_max_drop = min(def_max_drop, 0.20)
+        def_max_drop = max(def_max_drop, 0.10)
+
+    # 限制下降/上升幅度
+    if previous_agg - raw_agg > agg_max_drop:
+        agg = max(previous_agg - agg_max_drop, min_agg)
+    elif raw_agg - previous_agg > agg_max_drop:
+        agg = min(previous_agg + agg_max_drop, 10.0)
+    else:
+        agg = raw_agg
+
+    if previous_def - raw_def > def_max_drop:
+        defensiveness = max(previous_def - def_max_drop, min_def)
+    elif raw_def - previous_def > def_max_drop:
+        defensiveness = min(previous_def + def_max_drop, 10.0)
+    else:
+        defensiveness = raw_def
+
+    # ========== 【核心优化】防御值"显性同意标记"检测 ==========
+    # 人类没有"内心独白"，因此需从其发言内容中提取"服软"信号
+    acceptance_keywords = ["谢谢", "好的", "是的", "会改", "明白", "你说的对", "听你的", "嗯",
+                          "我明白了", "我会的", "我会这样", "我会这么做", "有道理", "对吧",
+                          "我同意", "认可", "我接受", "你说得对", "我觉得你说的对"]
+
+    # 检测是否包含接纳关键词
+    has_acceptance = any(keyword in text for keyword in acceptance_keywords)
+
+    if has_acceptance:
+        # 额外惩罚：在平滑分数的基础上，再额外降低防御值 1.0-1.5 分
+        acceptance_bonus = random.uniform(1.0, 1.5)
+        defensiveness = max(defensiveness - acceptance_bonus, min_def)
+
+        # 如果攻击性还较高，也适当降低
+        if agg > 4.0:
+            agg = max(agg - random.uniform(0.3, 0.6), min_agg)
+
+    # ========== 分数波动（模拟真实心理变化）==========
+    if random.random() < 0.2:
+        agg_fluctuation = random.uniform(-0.15, 0.15)
+        def_fluctuation = random.uniform(-0.2, 0.15)
+        agg = max(min(agg + agg_fluctuation, 10.0), min_agg)
+        defensiveness = max(min(defensiveness + def_fluctuation, 10.0), min_def)
+
+    # 精度统一到两位小数
+    agg = round(min(max(agg, min_agg), 10), 2)
+    defensiveness = round(min(max(defensiveness, min_def), 10), 2)
+
+    return agg, defensiveness
 
 # ==================== 人类输入处理函数 ====================
 def process_human_bully_input(user_text):
+    """
+    人类被试输入处理 - 包含完整的自动收尾流程
+    """
     client = get_openai_client()
     if not client:
         st.error("请先配置API密钥")
         return
 
+    # ========== Step 4: 如果正处于收尾阶段，用户输入最后回应后结束实验 ==========
+    if st.session_state.get('is_closing_session', False):
+        # 保存用户最后的回应
+        st.session_state.round_id += 1
+        round_id = st.session_state.round_id
+
+        # 评分（收尾阶段的评分应该较低）
+        aggression, defensiveness = score_human_input(user_text, client)
+
+        save_to_csv("Bully", user_text, aggression, defensiveness_score=defensiveness)
+        st.session_state.conversation_history.append({
+            "round": round_id,
+            "role": "Bully",
+            "content": user_text,
+            "aggression_score": aggression,
+            "defensiveness_score": defensiveness,
+            "inner_thought": "",
+            "timestamp": datetime.now().strftime("%H:%M:%S")
+        })
+        st.session_state.aggression_scores.append(aggression)
+        st.session_state.defensiveness_scores.append(defensiveness)
+
+        # 正式结束实验
+        st.session_state.is_closing_session = False
+        st.session_state.experiment_completed = True
+        save_summary_csv("Auto_Terminated")
+        st.success("🎉 实验完成！感谢您的参与。请点击下方【导出实验数据】并提交给主试。")
+        return
+
+    # ========== 正常对话流程 ==========
     # 1. 调用AI评分
     aggression, defensiveness = score_human_input(user_text, client)
 
@@ -1681,6 +1848,33 @@ def process_human_bully_input(user_text):
                 "timestamp": datetime.now().strftime("%H:%M:%S")
             })
 
+    # ========== Step 1 & Step 2: 检测达标条件，触发收尾流程 ==========
+    if should_end_conversation_human():
+        # 设置收尾标志
+        st.session_state.is_closing_session = True
+        st.session_state.closing_prompt_shown = True  # 用于界面显示提示
+
+        # 生成治疗师收尾发言
+        therapist_resp = generate_agent_response("therapist", client)
+        if therapist_resp:
+            therapist_content = therapist_resp["content"]
+            st.session_state.last_therapist_content = therapist_content
+            st.session_state.last_3_therapist_contents.append(therapist_content)
+            if len(st.session_state.last_3_therapist_contents) > 3:
+                st.session_state.last_3_therapist_contents.pop(0)
+            save_to_csv("Therapist", therapist_content, 0)
+            st.session_state.conversation_history.append({
+                "round": round_id,
+                "role": "Therapist",
+                "content": therapist_content,
+                "aggression_score": 0,
+                "inner_thought": "",
+                "timestamp": datetime.now().strftime("%H:%M:%S")
+            })
+        # 注意：不结束实验，等待用户输入最后一次回应
+        return
+
+    # ========== 正常流程：生成治疗师回应 ==========
     # 5. 生成治疗师回应
     therapist_resp = generate_agent_response("therapist", client)
     if therapist_resp:
@@ -2033,14 +2227,24 @@ with col3:
         strategy_desc = "去抑制化 + 社会羞耻感唤起"
         
     st.markdown(f"**核心技法**: {strategy_desc}")
-    
-    st.info("""
-    **🎯 临床达标退出机制**
-    目标非清零，而是降至安全阈值：
-    - 攻击性 ≤ 3.5
-    - 防御值 ≤ 3.5
-    **连续三轮达标即自动温和收尾（治疗师收尾 + 欺凌者回应）**
-    """)
+
+    # 根据模式显示不同的退出机制说明
+    if st.session_state.human_bully_mode:
+        st.info("""
+        **🎯 临床达标退出机制（人类模式）**
+        目标非清零，而是降至安全阈值：
+        - 攻击性 ≤ 3.85
+        - 防御值 ≤ 3.85
+        **连续两轮达标即自动温和收尾（治疗师收尾 → 用户回应）**
+        """)
+    else:
+        st.info("""
+        **🎯 临床达标退出机制（AI模式）**
+        目标非清零，而是降至安全阈值：
+        - 攻击性 ≤ 3.5
+        - 防御值 ≤ 3.5
+        **连续三轮达标即自动温和收尾（治疗师收尾 + 欺凌者回应）**
+        """)
 
 st.divider()
 st.header("💬 对话历史")
@@ -2099,6 +2303,10 @@ else:
     else:
         # ========== 人类欺凌者模式 ==========
         if st.session_state.human_bully_mode:
+            # ========== 收尾阶段提示 ==========
+            if st.session_state.get('is_closing_session', False):
+                st.success("✨ 系统检测到您的情绪已明显好转，治疗师已做最后总结。请回应后结束实验。")
+
             # 显示角色引导卡片
             with st.container():
                 st.markdown("### 🎭 你的欺凌者角色")
@@ -2119,12 +2327,18 @@ else:
                     "**示例发言**：\n"
                     "- “笑死，现在的00后除了要高工资还会干什么？纯纯的眼高手低。”\n"
                     "- “天天喊着整顿职场，其实就是能力差还懒，真够可笑的。”\n"
+                    
                     "请结合左侧选择的【欺凌类型】（如造谣、辱骂等），模仿上述风格输入，保持角色一致性。"
                 )
-            
+
             # 人类输入表单
             with st.form(key="human_input_form", clear_on_submit=True):
-                user_input = st.text_area("✍️ 输入你作为欺凌者的话", height=100, placeholder="请模仿角色语气输入...")
+                # 根据是否收尾阶段调整提示语
+                if st.session_state.get('is_closing_session', False):
+                    placeholder_text = "治疗师已做最后总结，请输入您的回应以结束实验..."
+                else:
+                    placeholder_text = "请模仿角色语气输入..."
+                user_input = st.text_area("✍️ 输入你作为欺凌者的话", height=100, placeholder=placeholder_text)
                 submitted = st.form_submit_button("🚀 发送")
             if submitted and user_input:
                 st.session_state.human_input = user_input
@@ -2135,13 +2349,13 @@ else:
                 process_human_bully_input(st.session_state.human_input)
                 st.rerun()
 
-            # ===== 【新增】真人主观结束按钮 =====
+            # ===== 【保留】真人主观结束按钮 =====
             if len(st.session_state.conversation_history) >= 2:
                 st.divider()
-                if st.button("🛑 我觉得被说服了 / 不想吵了 (结束实验)", type="secondary", use_container_width=True):
+                if st.button("🛑 我觉得被说服了 / 不想吵了 (结束实验)”, type=”secondary", use_container_width=True):
                     # 记录系统消息到明细表
                     save_to_csv("System", "【实验终止】人类被试主动点击结束按钮退出实验。", 0, inner_thought="N/A", defensiveness_score=0)
-                    
+
                     st.session_state.termination_note = "真人被试主动终止"
                     save_summary_csv("Human_Terminated")
                     st.session_state.experiment_completed = True
