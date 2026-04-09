@@ -2352,7 +2352,7 @@ else:
             # ===== 【保留】真人主观结束按钮 =====
             if len(st.session_state.conversation_history) >= 2:
                 st.divider()
-                if st.button("🛑 我觉得被说服了 / 不想吵了 (结束实验)”, type=”secondary", use_container_width=True):
+                if st.button("🛑 我觉得被说服了 / 不想吵了 (结束实验)", type="secondary", use_container_width=True):
                     # 记录系统消息到明细表
                     save_to_csv("System", "【实验终止】人类被试主动点击结束按钮退出实验。", 0, inner_thought="N/A", defensiveness_score=0)
 
