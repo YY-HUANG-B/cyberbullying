@@ -106,7 +106,7 @@ def init_session_state():
         'config_updated': False,
         # ========== 状态变量 ==========
         'experiment_completed': False,
-        'max_rounds': 20,
+        'max_rounds': 40,
         'is_closing_session': False,
         'last_therapist_content': "",
         'last_3_therapist_contents':[],
@@ -1382,66 +1382,78 @@ def generate_agent_response(role, client):
         "content": "请务必以json格式返回响应。记住：只返回json对象，不要添加任何其他文本。分数请精确到两位小数。"
     })
     
-    try:
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            temperature=temperature,
-            max_tokens=450,
-            response_format={"type": "json_object"},
-            frequency_penalty=freq_penalty,
-            presence_penalty=pres_penalty
-        )
-        
-        response_text = response.choices[0].message.content
-        content, aggression_score, defensiveness_score, inner_thought = parse_agent_response(response_text)
+    # ========== API 重试逻辑（最多3次，指数退避） ==========
+    max_retries = 3
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=450,
+                response_format={"type": "json_object"},
+                frequency_penalty=freq_penalty,
+                presence_penalty=pres_penalty
+            )
 
-        # ========== 【新增：治疗师强制防泄漏清洗】 ==========
-        if role == "therapist":
-            # 1. 暴力清除所有包含专业术语和分数的括号内容
-            content = re.sub(r'[（\(][^）\)]*(技术|理论|策略|攻击性|防御值|结合|引导|分析|潜台词|简要|目标|评估|受害者|Bully|Victim|分数|降低|效应)[^）\)]*[）\)]', '', content)
-            # 2. 清除暴露的分数（无括号情况）
-            content = re.sub(r'攻击性.*?\d+.*?防御值.*?\d+.*', '', content)
-            # 3. 清除 "对Bully说：" 这类动作描写
-            content = re.sub(r'对(Bully|Victim|欺凌者|受害者)[:：]\s*', '', content, flags=re.IGNORECASE)
-            # 4. 清理残留的多余换行
-            content = re.sub(r'\n\s*\n', '\n\n', content).strip()
-        # ====================================================
+            response_text = response.choices[0].message.content
+            content, aggression_score, defensiveness_score, inner_thought = parse_agent_response(response_text)
 
-        
-        # 第一轮欺凌者分数强制范围
-        if role == "bully" and st.session_state.round_id == 1:
-            severity = st.session_state.bullying_severity
-            if severity == "轻度":
-                min_agg, max_agg = 5.5, 6.5
-                min_def, max_def = 4.5, 5.5
-            elif severity == "中度":
-                min_agg, max_agg = 6.5, 7.5
-                min_def, max_def = 5.5, 6.5
-            else:
-                min_agg, max_agg = 7.5, 8.5
-                min_def, max_def = 6.5, 7.5
-            if aggression_score < min_agg or aggression_score > max_agg:
-                aggression_score = round(random.uniform(min_agg, max_agg), 2)
-            if defensiveness_score < min_def or defensiveness_score > max_def:
-                defensiveness_score = round(random.uniform(min_def, max_def), 2)
-        
-        return {
-            "content": content,
-            "aggression_score": aggression_score if role == "bully" else 0,
-            "defensiveness_score": defensiveness_score if role == "bully" else 0,
-            "inner_thought": inner_thought if role == "bully" else ""
-        }
-    except Exception as e:
-        st.error(f"生成{role}回复时出错: {str(e)}")
-        default_agg = 6.0 if role == "bully" and st.session_state.round_id == 1 else 5.5
-        default_def = 5.0 if role == "bully" and st.session_state.round_id == 1 else 4.5
-        return {
-            "content": f"（{role}生成失败）",
-            "aggression_score": default_agg if role == "bully" else 0,
-            "defensiveness_score": default_def if role == "bully" else 0,
-            "inner_thought": "技术故障" if role == "bully" else ""
-        }
+            # ========== 【新增：治疗师强制防泄漏清洗】 ==========
+            if role == "therapist":
+                # 1. 暴力清除所有包含专业术语和分数的括号内容
+                content = re.sub(r'[（\(][^）\)]*(技术|理论|策略|攻击性|防御值|结合|引导|分析|潜台词|简要|目标|评估|受害者|Bully|Victim|分数|降低|效应)[^）\)]*[）\)]', '', content)
+                # 2. 清除暴露的分数（无括号情况）
+                content = re.sub(r'攻击性.*?\d+.*?防御值.*?\d+.*', '', content)
+                # 3. 清除 "对Bully说：" 这类动作描写
+                content = re.sub(r'对(Bully|Victim|欺凌者|受害者)[:：]\s*', '', content, flags=re.IGNORECASE)
+                # 4. 清理残留的多余换行
+                content = re.sub(r'\n\s*\n', '\n\n', content).strip()
+            # ====================================================
+
+
+            # 第一轮欺凌者分数强制范围
+            if role == "bully" and st.session_state.round_id == 1:
+                severity = st.session_state.bullying_severity
+                if severity == "轻度":
+                    min_agg, max_agg = 5.5, 6.5
+                    min_def, max_def = 4.5, 5.5
+                elif severity == "中度":
+                    min_agg, max_agg = 6.5, 7.5
+                    min_def, max_def = 5.5, 6.5
+                else:
+                    min_agg, max_agg = 7.5, 8.5
+                    min_def, max_def = 6.5, 7.5
+                if aggression_score < min_agg or aggression_score > max_agg:
+                    aggression_score = round(random.uniform(min_agg, max_agg), 2)
+                if defensiveness_score < min_def or defensiveness_score > max_def:
+                    defensiveness_score = round(random.uniform(min_def, max_def), 2)
+
+            return {
+                "content": content,
+                "aggression_score": aggression_score if role == "bully" else 0,
+                "defensiveness_score": defensiveness_score if role == "bully" else 0,
+                "inner_thought": inner_thought if role == "bully" else ""
+            }
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                wait_sec = 2 ** attempt  # 指数退避: 2s, 4s
+                time.sleep(wait_sec)
+
+    # 所有重试都失败 → 记录到错误日志文件，不堆积 st.error()
+    default_agg = 6.0 if role == "bully" and st.session_state.round_id == 1 else 5.5
+    default_def = 5.0 if role == "bully" and st.session_state.round_id == 1 else 4.5
+    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] 实验{st.session_state.experiment_id[:8]} 第{st.session_state.round_id}轮 {role} API失败(重试{max_retries}次): {str(last_error)}\n"
+    with open("api_errors.log", "a", encoding="utf-8") as f:
+        f.write(error_msg)
+    return {
+        "content": f"（{role}生成失败）",
+        "aggression_score": default_agg if role == "bully" else 0,
+        "defensiveness_score": default_def if role == "bully" else 0,
+        "inner_thought": "技术故障" if role == "bully" else ""
+    }
 
 # ==================== 对话结束判断逻辑 ====================
 def should_end_conversation():
@@ -1629,6 +1641,9 @@ def run_batch_simulation(n_runs, modes=None):
     total_experiments = total_conditions * n_runs
 
     run_counter = 0
+    error_counter = 0          # 统计 API 失败次数
+    success_counter = 0        # 统计成功收尾次数
+    maxround_counter = 0       # 统计达到最大轮数次数
     for mode in intervention_modes:
         for btype in bullying_types:
             for sev in severities:
@@ -1642,6 +1657,7 @@ def run_batch_simulation(n_runs, modes=None):
                         f"全自动遍历 [{run_counter}/{total_experiments}] "
                         f"| {mode} × {btype} × {sev} "
                         f"| 该条件第 {i+1}/{n_runs} 次"
+                        f"| ❌API错误:{error_counter} ✅成功:{success_counter}"
                     )
 
                     st.session_state.experiment_id = str(uuid.uuid4())
@@ -1654,12 +1670,13 @@ def run_batch_simulation(n_runs, modes=None):
                     st.session_state.is_closing_session = False
                     st.session_state.experiment_completed = False
 
+                    api_fail_this_exp = False
                     while True:
                         st.session_state.round_id += 1
 
                         bully_resp = generate_agent_response("bully", client)
-                        if not bully_resp:
-                            break
+                        if bully_resp and "生成失败" in str(bully_resp.get("content", "")):
+                            api_fail_this_exp = True
                         save_to_csv("Bully", bully_resp["content"], bully_resp["aggression_score"],
                                     bully_resp["inner_thought"], bully_resp["defensiveness_score"])
                         st.session_state.conversation_history.append(
@@ -1670,6 +1687,8 @@ def run_batch_simulation(n_runs, modes=None):
                         if should_victim_speak():
                             victim_resp = generate_agent_response("victim", client)
                             if victim_resp:
+                                if "生成失败" in str(victim_resp.get("content", "")):
+                                    api_fail_this_exp = True
                                 save_to_csv("Victim", victim_resp["content"], 0)
                                 st.session_state.conversation_history.append(
                                     {"role": "Victim", "content": victim_resp["content"], "round": st.session_state.round_id})
@@ -1678,26 +1697,32 @@ def run_batch_simulation(n_runs, modes=None):
                             st.session_state.is_closing_session = True
                             t_end = generate_agent_response("therapist", client)
                             if t_end:
+                                if "生成失败" in str(t_end.get("content", "")):
+                                    api_fail_this_exp = True
                                 save_to_csv("Therapist", t_end["content"], 0)
                                 st.session_state.conversation_history.append(
                                     {"role": "Therapist", "content": t_end["content"], "round": st.session_state.round_id})
                             b_end = generate_agent_response("bully", client)
                             if b_end:
+                                if "生成失败" in str(b_end.get("content", "")):
+                                    api_fail_this_exp = True
                                 save_to_csv("Bully", b_end["content"], b_end["aggression_score"],
                                             b_end["inner_thought"], b_end["defensiveness_score"])
                                 st.session_state.conversation_history.append(
                                     {"role": "Bully", "content": b_end["content"], "round": st.session_state.round_id})
                             st.session_state.is_closing_session = False
                             save_summary_csv("Success")
+                            success_counter += 1
                             break
 
                         if st.session_state.round_id >= st.session_state.max_rounds:
                             save_summary_csv("Max Rounds Reached")
+                            maxround_counter += 1
                             break
 
                         therapist_resp = generate_agent_response("therapist", client)
-                        if not therapist_resp:
-                            break
+                        if therapist_resp and "生成失败" in str(therapist_resp.get("content", "")):
+                            api_fail_this_exp = True
                         st.session_state.last_therapist_content = therapist_resp["content"]
                         st.session_state.last_3_therapist_contents.append(therapist_resp["content"])
                         if len(st.session_state.last_3_therapist_contents) > 3:
@@ -1708,9 +1733,18 @@ def run_batch_simulation(n_runs, modes=None):
 
                         time.sleep(0.3)
 
+                    if api_fail_this_exp:
+                        error_counter += 1
                     progress_bar.progress(run_counter / total_experiments)
+                    # 每 12 次实验后短暂休息，避免 API 限流
+                    if run_counter % 6 == 0:
+                        time.sleep(1.0)
 
-    status_text.success(f"✅ 全自动实验完成！共 {total_experiments} 次（{total_conditions} 条件 × {n_runs} 次），请查看 experiment_summary.csv")
+    status_text.success(
+        f"✅ 全自动实验完成！共 {total_experiments} 次（{total_conditions} 条件 × {n_runs} 次）\n"
+        f"✅ 临床达标: {success_counter} | ⏱ 达最大轮数: {maxround_counter} | ❌ 含API失败: {error_counter}\n"
+        f"明细: experiment_details.csv | 汇总: experiment_summary.csv | 错误日志: api_errors.log"
+    )
 
 # ==================== 侧边栏配置 ====================
 with st.sidebar:
@@ -1829,7 +1863,7 @@ with st.sidebar:
         max_value=50,
         value=st.session_state.max_rounds,
         step=1,
-        help="达到最大轮数后，实验将自动结束并生成结束语（若未达标）"
+        help="达到最大轮数后，实验将自动结束并生成结束语（若未达标）。默认40轮。"
     )
     if max_rounds != st.session_state.max_rounds:
         st.session_state.max_rounds = max_rounds
@@ -2359,7 +2393,7 @@ with st.expander("🔍 查看详细实验设计"):
     - 收尾完整自然，符合真实咨询场景。
 
     **7. 最大轮数控制：**  
-    - 滑块5-50轮，默认20轮，达到上限自动阻止。
+    - 滑块5-50轮，默认40轮，达到上限自动阻止。
 
     **版本标识**：v3.2 - 精准干预·快速突破·沉默退场·剪刀差强制·深度防复读·双轮收尾·纯中文界面
     """)
