@@ -1656,6 +1656,40 @@ def run_batch_simulation(n_runs, modes=None):
     total_conditions = len(bullying_types) * len(severities) * len(intervention_modes)
     total_experiments = total_conditions * n_runs
 
+    ALL_PROFILES = ["易怒的青少年", "愤世嫉俗的社会青年", "固执的中年人"]
+
+    def _get_profile_allocations(mode, btype, sev, n):
+        """
+        读取已有 summary CSV，统计当前条件下各画像已完成次数，
+        返回 N 个画像列表，优先补充使用最少的画像，确保跨批次均匀分配。
+        例如该条件已跑过 3次(各画像1次)，本次 N=23，则三种画像分别再分 8,8,7 → 最终各 9,9,8。
+        """
+        _, summary_csv = _get_csv_paths()
+        counts = {p: 0 for p in ALL_PROFILES}
+        if os.path.exists(summary_csv):
+            try:
+                hist = pd.read_csv(summary_csv, encoding='utf-8-sig')
+                mask = (
+                    (hist['Bullying_Type'] == btype) &
+                    (hist['Severity'] == sev) &
+                    (hist['Intervention_Mode'] == mode)
+                )
+                for p in ALL_PROFILES:
+                    counts[p] = int(mask[hist['Bully_Profile'] == p].sum() if mask.any() else 0)
+            except Exception:
+                pass
+
+        total = dict(counts)  # mutable copy
+        alloc = []
+        for _ in range(n):
+            min_c = min(total.values())
+            candidates = [p for p, c in total.items() if c == min_c]
+            chosen = random.choice(candidates)
+            alloc.append(chosen)
+            total[chosen] += 1
+        random.shuffle(alloc)
+        return alloc
+
     run_counter = 0
     error_counter = 0          # 统计 API 失败次数
     success_counter = 0        # 统计成功收尾次数
@@ -1667,11 +1701,18 @@ def run_batch_simulation(n_runs, modes=None):
                 st.session_state.bullying_type = btype
                 st.session_state.bullying_severity = sev
 
+                # ──── 跨批次均匀分配：读取已有CSV，优先补充使用最少的画像 ────
+                profile_pool = _get_profile_allocations(mode, btype, sev, n_runs)
+
                 for i in range(n_runs):
+                    # 分配画像
+                    st.session_state.bully_profile = profile_pool[i]
+
                     run_counter += 1
                     status_text.text(
                         f"全自动遍历 [{run_counter}/{total_experiments}] "
                         f"| {mode} × {btype} × {sev} "
+                        f"| 画像:{st.session_state.bully_profile[:2]} "
                         f"| 该条件第 {i+1}/{n_runs} 次"
                         f"| ❌API错误:{error_counter} ✅成功:{success_counter}"
                     )
