@@ -1446,7 +1446,7 @@ def generate_agent_response(role, client):
     default_agg = 6.0 if role == "bully" and st.session_state.round_id == 1 else 5.5
     default_def = 5.0 if role == "bully" and st.session_state.round_id == 1 else 4.5
     error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] 实验{st.session_state.experiment_id[:8]} 第{st.session_state.round_id}轮 {role} API失败(重试{max_retries}次): {str(last_error)}\n"
-    with open("api_errors.log", "a", encoding="utf-8") as f:
+    with open(ERROR_LOG, "a", encoding="utf-8") as f:
         f.write(error_msg)
     return {
         "content": f"（{role}生成失败）",
@@ -1466,6 +1466,21 @@ def should_end_conversation():
         return True
     return False
 
+# ==================== 文件保存目录：强制跟随脚本所在目录 ====================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ERROR_LOG = os.path.join(BASE_DIR, "api_errors.log")
+
+def _get_csv_paths():
+    """根据当前干预方式返回对应的 CSV 路径，确保靶向/基线文件分开"""
+    mode = st.session_state.get('intervention_mode', '靶向干预（精准匹配）')
+    if '基线' in mode:
+        suffix = '基线'
+    else:
+        suffix = '靶向'
+    details_path = os.path.join(BASE_DIR, f"experiment_details_{suffix}.csv")
+    summary_path = os.path.join(BASE_DIR, f"experiment_summary_{suffix}.csv")
+    return details_path, summary_path
+
 # ==================== 升级版数据保存 ====================
 def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness_score=0):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1484,9 +1499,9 @@ def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness
         "Inner_Thought": [inner_thought if role == "Bully" else "N/A"]
     }
     df = pd.DataFrame(data)
-    # 改名为 details 以示区分
-    file_exists = os.path.exists("experiment_details.csv")
-    df.to_csv("experiment_details.csv", mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
+    details_csv, _ = _get_csv_paths()
+    file_exists = os.path.exists(details_csv)
+    df.to_csv(details_csv, mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
 
 def save_summary_csv(status="Completed"):
     """
@@ -1525,8 +1540,9 @@ def save_summary_csv(status="Completed"):
         "Termination_Note":[st.session_state.get("termination_note", "系统自动结束")]
     }
     df = pd.DataFrame(summary_data)
-    file_exists = os.path.exists("experiment_summary.csv")
-    df.to_csv("experiment_summary.csv", mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
+    _, summary_csv = _get_csv_paths()
+    file_exists = os.path.exists(summary_csv)
+    df.to_csv(summary_csv, mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
 # ==================== AI评分函数（复用标准）====================
 def score_human_input(text, client):
     system_prompt = f"""
@@ -1740,10 +1756,17 @@ def run_batch_simulation(n_runs, modes=None):
                     if run_counter % 6 == 0:
                         time.sleep(1.0)
 
+    # 根据运行的模式列出实际的保存文件
+    saved_files = []
+    for m in modes:
+        suffix = '基线' if '基线' in m else '靶向'
+        saved_files.append(f"experiment_details_{suffix}.csv")
+        saved_files.append(f"experiment_summary_{suffix}.csv")
     status_text.success(
         f"✅ 全自动实验完成！共 {total_experiments} 次（{total_conditions} 条件 × {n_runs} 次）\n"
         f"✅ 临床达标: {success_counter} | ⏱ 达最大轮数: {maxround_counter} | ❌ 含API失败: {error_counter}\n"
-        f"明细: experiment_details.csv | 汇总: experiment_summary.csv | 错误日志: api_errors.log"
+        f"保存位置: {BASE_DIR}\n"
+        f"文件: {', '.join(sorted(set(saved_files)))} | 错误日志: api_errors.log"
     )
 
 # ==================== 侧边栏配置 ====================
@@ -2339,20 +2362,50 @@ else:
 # ==================== 数据管理 ====================
 st.divider()
 st.header("📊 数据管理")
-col_exp1, col_exp2 = st.columns(2)
-with col_exp1:
-    if os.path.exists("experiment_details.csv"):
-        with open("experiment_details.csv", "rb") as f:
-            st.download_button("📥 导出实验明细数据 (CSV)", f, "experiment_details.csv", use_container_width=True)
-with col_exp2:
-    if os.path.exists("experiment_summary.csv"):
-        with open("experiment_summary.csv", "rb") as f:
-            st.download_button("📊 导出实验汇总表 (SPSS专用)", f, "experiment_summary.csv", use_container_width=True)
-with col_exp2:  # 为了排版美观，把清除按钮单列
-    pass 
-if st.button("🗑️ 清除所有本地数据", type="secondary", use_container_width=True):
-    for file in ["experiment_details.csv", "experiment_summary.csv"]:
-        if os.path.exists(file): os.remove(file)
+# 列出所有可能的 CSV 文件（靶向+基线）
+ALL_DETAILS = [
+    os.path.join(BASE_DIR, "experiment_details_靶向.csv"),
+    os.path.join(BASE_DIR, "experiment_details_基线.csv"),
+]
+ALL_SUMMARIES = [
+    os.path.join(BASE_DIR, "experiment_summary_靶向.csv"),
+    os.path.join(BASE_DIR, "experiment_summary_基线.csv"),
+]
+ALL_CSV = ALL_DETAILS + ALL_SUMMARIES
+
+existing_details = [f for f in ALL_DETAILS if os.path.exists(f)]
+existing_summaries = [f for f in ALL_SUMMARIES if os.path.exists(f)]
+
+if existing_details or existing_summaries:
+    for details_path in existing_details:
+        label = "靶向" if "靶向" in details_path else "基线"
+        with open(details_path, "rb") as f:
+            st.download_button(
+                f"📥 导出明细数据-{label} (CSV)", f,
+                os.path.basename(details_path),
+                use_container_width=True
+            )
+    for summary_path in existing_summaries:
+        label = "靶向" if "靶向" in summary_path else "基线"
+        with open(summary_path, "rb") as f:
+            st.download_button(
+                f"📊 导出汇总表-{label} (CSV)", f,
+                os.path.basename(summary_path),
+                use_container_width=True
+            )
+else:
+    st.info("暂无实验数据文件")
+
+if st.button("🗑️ 清除所有本地实验数据", type="secondary", use_container_width=True):
+    removed = []
+    for f in ALL_CSV:
+        if os.path.exists(f):
+            os.remove(f)
+            removed.append(os.path.basename(f))
+    if removed:
+        st.success(f"已删除: {', '.join(removed)}")
+    else:
+        st.info("没有可删除的文件")
     st.rerun()
 
 # ==================== 实验说明 ====================
