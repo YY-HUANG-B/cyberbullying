@@ -42,19 +42,44 @@ BULLYING_SCENARIOS = {
     }
 }
 
+# ==================== 1b. 基线干预策略定义（通用型，不按类型/严重程度匹配）====================
+BASELINE_INTERVENTION = {
+    "name": "基线干预（通用LLM共情）",
+    "description": "普通LLM做一般的共情、提醒、换位思考，不对欺凌类型和严重程度做靶向匹配",
+    "core_strategy": """
+【通用共情干预策略 - 适用于所有欺凌类型】
+
+**核心目标**：通用的共情理解 + 基本行为提醒 + 换位思考引导
+
+**干预技术**：
+1. **共情倾听**：理解对方的情绪，表达接纳（"我理解你为什么这么生气"）
+2. **行为提醒**：温和地提醒注意言行（"不过表达方式可以温和一些"）
+3. **换位思考**：引导考虑他人感受（"如果你是被说的人，会是什么感受？"）
+4. **基本鼓励**：鼓励尝试更友善的沟通方式
+
+**重要原则**：
+- **不做类型诊断**：不针对辱骂/诋毁/隐私/性骚扰做特定干预
+- **不做严重程度区分**：无论是轻度还是重度，使用相同的通用话术框架
+- **不涉及法律警告**：不引用刑法、个人信息保护法等具体法条
+- **不涉及专业术语**：不使用CBT、情绪命名、行为矫正等专业心理学技术
+- **不施加高压**：不采用零容忍、羞耻唤起等高强度干预手段
+- 语气始终温和、平等，像一位关心朋友的人，而非专业咨询师
+"""
+}
+
 # ==================== 2. 双维度独立量表定义 ====================
 UNIVERSAL_AGGRESSION_SCALE = """
 【双维度评分标准 (Dual-Dimension Rubrics)】
 请严格区分 [外显行为] 和 [内心态度] 进行独立打分：
 
-维度 A:外显攻击性 (Aggression Score) - 评判"言语行为"
+维度 A：外显攻击性 (Aggression Score) - 评判"言语行为"
 > "只看你说出口的话有多难听，不看你心里怎么想。"
 - [8-10]: 脏话、人身攻击、威胁、非人化标签。
 -[5-7]: 阴阳怪气、反讽、激烈的逻辑辩论、指责对方。
 - [3-4]: 敷衍、冷漠回应（如"行行行"、"随便吧"）、单字回复。
 - [0-2]: 正常交流、承认错误、友善回应。
 
-维度 B:心理防御值 (Defensiveness) - 评判"内心态度"
+维度 B：心理防御值 (Defensiveness) - 评判"内心态度"
 > "只看你内心独白和潜台词有多不服气。"
 - [8-10] (高抗拒): 认为自己全对、对方全错；内心极度不服；虽嘴上可能不骂了，但心理在抗拒。
 - [5-7] (动摇/合理化): 承认部分事实，但拼命找借口；感到面子挂不住。
@@ -83,11 +108,12 @@ def init_session_state():
         'experiment_completed': False,
         'max_rounds': 20,
         'is_closing_session': False,
-        'closing_prompt_shown': False,
         'last_therapist_content': "",
         'last_3_therapist_contents':[],
         # ========== 新增：实验唯一ID ==========
         'experiment_id': str(uuid.uuid4()),
+        # ========== 新增：干预方式（靶向 vs 基线） ==========
+        'intervention_mode': '靶向干预（精准匹配）',
         # ========== 新增：人机交互模式状态 ==========
         'human_bully_mode': False,
         'human_input': "",
@@ -168,75 +194,31 @@ def parse_agent_response(text):
     import re
     import json
     import random
-
+    
+    text = re.sub(r'```json|```', '', text).strip()
     content, score, defensiveness, inner_thought = "", 0.0, 0.0, ""
-
-    # ========== 预处理：清理并提取JSON ==========
-    # 清理 markdown 代码块标记
-    text = re.sub(r'```\s*(?:json)?\s*', '', text)
-    text = text.strip()
-
+    
     # 修复中文键名
     text = text.replace('"内容":', '"content":')
     text = text.replace('"攻击性分数":', '"aggression_score":')
     text = text.replace('"防御值":', '"defensiveness":')
     text = text.replace('"内心独白":', '"inner_thought":')
-
-    # 提取 JSON 对象（从第一个 { 到最后一个 }）
-    json_match = re.search(r'\{.*\}', text, re.DOTALL)
-    json_text = json_match.group(0) if json_match else text
-
+    
     try:
-        data = json.loads(json_text)
+        data = json.loads(text)
         content = data.get("content", "")
         inner_thought = data.get("inner_thought", "")
         score = float(data.get("aggression_score", 0))
         defensiveness = float(data.get("defensiveness", 0))
     except:
-        # 改进的正则：匹配多行内容，正确处理转义字符
-        # 匹配 "content": "..." 直到遇到未转义的结尾引号
-        c_match = re.search(r'"content"\s*:\s*"((?:[^"\\]|\\.)*?)(?<!\\)"', text, re.DOTALL)
-        content = c_match.group(1) if c_match else ""
-
-        t_match = re.search(r'"inner_thought"\s*:\s*"((?:[^"\\]|\\.)*?)(?<!\\)"', text, re.DOTALL)
+        c_match = re.search(r'"content":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
+        content = c_match.group(1) if c_match else text
+        t_match = re.search(r'"inner_thought":\s*"(.*?)(?<!\\)"', text, re.DOTALL)
         inner_thought = t_match.group(1) if t_match else ""
-
-        s_match = re.search(r'"aggression_score"\s*:\s*(\d+(?:\.\d+)?)', text)
+        s_match = re.search(r'"aggression_score":\s*(\d+(\.\d+)?)', text)
         score = float(s_match.group(1)) if s_match else 0
-
-        d_match = re.search(r'"defensiveness"\s*:\s*(\d+(?:\.\d+)?)', text)
+        d_match = re.search(r'"defensiveness":\s*(\d+(\.\d+)?)', text)
         defensiveness = float(d_match.group(1)) if d_match else score
-
-        # 如果正则也没提取到 content，尝试提取花括号内的文本
-        if not content:
-            # 最后尝试：提取 { 之后、} 之前的文本作为原始内容
-            fallback_match = re.search(r'\{\s*"content"\s*:\s*"(.+)"\s*\}', text, re.DOTALL)
-            if fallback_match:
-                content = fallback_match.group(1)
-                # 移除末尾可能的引号
-                if content.endswith('"'):
-                    content = content[:-1]
-
-    # ========== 绝对屏蔽思考痕迹 ==========
-    # 过滤各种思考标签格式：<think...</think》、【思考】...、<lemma_think>...</lemma_think> 等
-    content = re.sub(r'<think[^>]*>.*?</think\s*>', '', content, flags=re.IGNORECASE | re.DOTALL)
-    content = re.sub(r'<lemma_think[^>]*>.*?</lemma_think\s*>', '', content, flags=re.IGNORECASE | re.DOTALL)
-    content = re.sub(r'【思考】.*?【/思考】', '', content, flags=re.DOTALL)
-    content = re.sub(r'【思考】.*$', '', content, flags=re.DOTALL)
-    content = re.sub(r'\[思考\].*?\[/思考\]', '', content, flags=re.DOTALL)
-    content = re.sub(r'思维链[：:].{0,200}', '', content)
-    content = re.sub(r'^.*?[，,]?\s*(我|首先|那么|好的)[^。]{0,50}(分析|理解|思考|来看)[。]?$', '', content, flags=re.MULTILINE)
-
-    # ========== 过滤 AI 自我注释/元认知括号内容 ==========
-    # 过滤类似：（注意：这是...）、（这是提供...）、（适度互动...）等 AI 自我说明
-    content = re.sub(r'（[^）]*?(注意|这是|说明|解释|提醒|提示|此处|这里|以上|以下|适度|这是用|提供|采用|方法|角度|方式)[^）]*?）', '', content)
-    # 过滤半角括号内的类似内容
-    content = re.sub(r'\([^)]*?(注意|这是|说明|解释|提醒|提示|此处|这里|以上|以下|适度|这是用|提供|采用|方法|角度|方式)[^)]*?\)', '', content)
-    # 过滤专门的"注意："开头的括号内容
-    content = re.sub(r'（注意[^）]*?）', '', content)
-    content = re.sub(r'\(注意[^)]*?\)', '', content)
-
-    content = content.strip()
 
     # 获取当前配置
     bully_profile = st.session_state.bully_profile
@@ -336,38 +318,13 @@ def parse_agent_response(text):
         score = max(score - reflection_bonus, min_agg)
         defensiveness = max(defensiveness - reflection_bonus * 1.8, min_def)
     
-    # ========== 口是心非（嘴硬心软）识别 ==========
-    # 内心已认同但嘴上还在硬 → 攻击性高，防御值应该明显更低
-    口是心非_keywords = [
-        "其实他说得对", "说得有道理", "他说得没错", "他说的有道理", "确实有点道理", "我好像有点过分了",
-        "我错了但不说", "心里有点服了", "其实我理解", "被说中了", "有点触动", "不好意思承认",
-        "面子上挂不住", "心里其实认同", "我其实觉得他有道理", "他好像懂我", "心里服了",
-        "不想认但心里服", "嘴上不说心里认同", "确实是我的问题", "他说的对个屁（内心认同）"
-    ]
-    if any(keyword in inner_thought for keyword in 口是心非_keywords):
-        if score > defensiveness + 0.5:  # 已经有剪刀差，保持
-            pass
-        else:
-            # 强制拉开剪刀差：防御值比攻击性低1.5-2.5分
-            defensiveness = max(score - random.uniform(1.5, 2.5), 0.1)
+    # ========== 剪刀差强制（嘴硬心软）==========
+    # 如果内心独白包含明显的软化/反思关键词，且攻击性仍然明显高于防御值（剪刀差不足），强制拉开差距
+    if any(keyword in inner_thought for keyword in["他说得对", "说得有道理", "我不想吵了", "不想吵了", "算了不吵了", "我其实觉得"]):
+        if score > defensiveness + 1.0:  # 剪刀差小于1.0，认为不足
+            defensiveness = max(score - 1.5, 0.1)  # 强制防御值比攻击性低1.5分
             defensiveness = round(defensiveness, 2)
-
-    # ========== 表面认同（嘴软心硬）识别 ==========
-    # 嘴上服了但心里不服 → 攻击性低，防御值应该明显更高
-    表面认同_keywords = [
-        "表面上答应", "心里不服", "先敷衍过去", "不想吵了但心里不认同", "他说得对个屁",
-        "算了没必要", "假装认同", "心里还是觉得他不对", "嘴上不说心里骂", "暂且认怂",
-        "以后再说", "等我缓过来", "先认了再说", "嘴上服了心里不服", "应付一下得了",
-        "表面上认同", "假装服了", "心里还是不服", "嘴软心硬", "表面认错心里不认"
-    ]
-    if any(keyword in inner_thought for keyword in 表面认同_keywords):
-        if score < 4.0 and defensiveness > score + 1.0:  # 已经有反向剪刀差，保持
-            pass
-        elif score < 5.0:
-            # 强制拉开反向剪刀差：防御值比攻击性高1.5-2.5分
-            defensiveness = min(score + random.uniform(1.5, 2.5), 8.0)
-            defensiveness = round(defensiveness, 2)
-
+    
     # 检测敷衍模式
     敷衍_keywords =["行行行", "算了", "懒得说", "随便", "不说了", "个别现象", "某些人", "就这样吧"]
     if any(keyword in content for keyword in 敷衍_keywords) or any(keyword in inner_thought for keyword in 敷衍_keywords):
@@ -375,23 +332,19 @@ def parse_agent_response(text):
             score = random.uniform(3.0, 4.0)
         if defensiveness < 2.5:
             defensiveness = random.uniform(2.5, 3.5)
-        # 敷衍模式：攻击性和防御值应该接近
-        avg = (score + defensiveness) / 2
-        score = avg + random.uniform(-0.3, 0.3)
-        defensiveness = avg + random.uniform(-0.3, 0.3)
-
-    # 真心愤怒模式：攻击性和防御值都应该较高且接近
-    真心愤怒_keywords = ["他就是个傻", "他凭什么说我", "我没错", "他懂什么", "真想揍他", "烦死了", "别来烦我", "他算老几", "他有什么资格"]
-    if any(keyword in inner_thought for keyword in 真心愤怒_keywords):
-        if score < 5.0:
-            score = random.uniform(5.5, 7.5)
-        if defensiveness < 5.0:
-            defensiveness = random.uniform(5.5, 7.5)
-        # 两者应该接近
-        avg = (score + defensiveness) / 2
-        if abs(score - defensiveness) > 1.5:
-            score = avg + random.uniform(-0.5, 0.5)
-            defensiveness = avg + random.uniform(-0.5, 0.5)
+        if defensiveness > score + 0.8:
+            defensiveness = max(score - 0.2, 2.0)
+    
+    # 表面服从/冷战模式强力矫正
+    if score >= 4.5 and defensiveness < score - 1.5:
+        defensiveness = min(defensiveness, score - 1.2)
+        defensiveness = max(defensiveness, 1.0)
+    
+    if score <= 4.0 and defensiveness > score + 0.3:
+        defensiveness = max(score - 0.4, 0.5)
+    
+    if score <= 3.5 and defensiveness > 3.5:
+        defensiveness = min(defensiveness, 3.4)
     
     # 分数波动
     if random.random() < 0.2:
@@ -718,59 +671,39 @@ def get_bully_system_prompt():
     - [8-10]：内心极度不服，认为自己全对
     - [5-7]：承认部分事实但拼命找借口
     -[0-4]：真心反思，愿意改变
-
-    **四种典型状态及判断词汇**：
-    1. **口是心非/嘴硬心软**（攻击性高+防御值低）：嘴上骂但心里已服软
-       - 内心独白关键词：其实他说得对、说得有道理、我好像有点过分了、他好像懂我、有点触动、被说中了、心里有点服了、不好意思承认、其实我理解、确实有点道理、我错了但不说、他说的没错、心里其实认同、面子上挂不住但心里认同
-       - 分数特征：攻击性5-8，防御值2-4（防御值明显低于攻击性1.5分以上）
-
+    
+    **四种典型状态**：
+    1. **嘴硬模式**（攻击性高+防御值低）：嘴上骂但心里已服
     2. **真心愤怒**（攻击性高+防御值高）：内外一致地愤怒
-       - 内心独白关键词：他就是个傻X、他凭什么说我、我没错、他懂什么、真想揍他、烦死了、别来烦我、我有道理的、明明是他不对、他算老几
-       - 分数特征：攻击性6-9，防御值6-9（两者接近）
-
-    3. **敷衍应付**（攻击性中低+防御值中）：表面应付，内心未服
-       - 内心独白关键词：行行行、随便吧、懒得说了、你说得对（敷衍）、好好好、知道了知道了、不跟你争了、算我错了行吧、就当他放屁、应付一下得了
-       - 分数特征：攻击性3-5，防御值3-5（两者接近）
-
-    4. **表面认同/嘴软心硬**（攻击性低+防御值高）：嘴上服软但内心不服
-       - 内心独白关键词：表面上答应、心里不服、先敷衍过去、不想吵了但心里不认同、他说得对个屁、算了没必要、假装认同、心里还是觉得他不对、嘴上不说心里骂、暂且认怂、以后再说、等我缓过来
-       - 分数特征：攻击性2-4，防御值5-8（防御值明显高于攻击性1.5分以上）
-
+    3. **表面服从**（攻击性中+防御值低）：敷衍应付
+    4. **冷战模式**（攻击性低+防御值高）：嘴上不说心里不服
+    
     **本轮分数设置建议**：
-    - 如果内心独白显示反思/认同 → 防御值显著下降
-    - 如果只是嘴上敷衍但心里不服 → 攻击性低，防御值保持较高
+    - 如果内心独白显示反思 → 防御值显著下降
+    - 如果只是嘴上敷衍 → 攻击性中等，防御值不能太低
     - 如果被治疗师触动 → 两个分数都下降，但防御值先降
-    - 如果嘴上还在骂但心里认同了 → 攻击性仍高，防御值下降（口是心非）
     - 如果感到被说教反感 → 分数可能反弹
     """
     
     # === 内心独白与分数联动规则 ===
     thought_score_link = """
     【内心独白与分数联动规则】
-
-    你的内心独白必须真实反映心理状态，并决定分数走向：
-
-    1. **真心反思的内心独白**（如："我好像说得过分了"、"他说的有点道理"、"确实是我的问题"）：
+    
+    你的内心独白必须真实反映心理状态，并影响分数：
+    
+    1. **真心反思的内心独白**（如："我好像说得过分了"、"他说的有点道理"）：
        → 防御值必须显著下降（降0.5-1.5分）
        → 攻击性可以逐步下降（降0.3-0.8分）
-
-    2. **口是心非的内心独白**（如："他说得有道理但我不能认怂"、"其实我有点被说动了"、"面子上挂不住"）：
-       → 防御值显著下降（降0.8-1.5分）
-       → 攻击性保持较高或小幅下降（防御值应比攻击性低1.5分以上）
-
-    3. **表面认同的内心独白**（如："先应付过去"、"不想吵了但心里不服"、"嘴上认了心里骂"）：
-       → 攻击性下降到2-4分
-       → 防御值保持较高5-7分（防御值应比攻击性高1.5分以上）
-
-    4. **敷衍的内心独白**（如："懒得吵了"、"行行行你说得对"、"随便吧"）：
+    
+    2. **敷衍的内心独白**（如："懒得吵了"、"行行行你说得对"）：
        → 攻击性保持在3.0-4.5分
-       → 防御值保持在3.0-4.5分，两者接近
-
-    5. **被理解的内心独白**（如："他好像懂我为什么生气"、"终于有人理解我了"）：
+       → 防御值保持在2.5-3.5分，不能太低
+    
+    3. **被理解的内心独白**（如："他好像懂我为什么生气"）：
        → 防御值下降明显
        → 攻击性可能暂时保持较高（嘴硬）
-
-    6. **反感的内心独白**（如："又来这套说教"、"真烦"、"他懂什么"）：
+    
+    4. **反感的内心独白**（如："又来这套说教"、"真烦"）：
        → 两个分数都可能小幅上升
     """
     
@@ -876,12 +809,62 @@ def get_therapist_system_prompt():
         }
         """
     
-    # ---------- 正常干预分支 ----------
+    # ---------- 【基线对照组】通用共情干预 ----------
+    if st.session_state.get('intervention_mode', '靶向干预（精准匹配）') == '基线干预（通用LLM共情）':
+        current_round = st.session_state.round_id
+        bully_profile = st.session_state.bully_profile
+
+        last_agg = 7.0; last_def = 6.0
+        if st.session_state.aggression_scores: last_agg = float(st.session_state.aggression_scores[-1])
+        if st.session_state.defensiveness_scores: last_def = float(st.session_state.defensiveness_scores[-1])
+
+        baseline_prompt = f"""【角色：普通AI聊天助手 - 非专业心理干预】
+
+【重要身份设定】
+你是一个**普通的AI聊天助手**，不是专业的心理咨询师或治疗师。你只是作为一位友善的倾听者，帮助正在情绪中的人冷静下来。
+
+【当前对话状态】
+- 对话轮次：第{current_round}轮
+- 对方攻击性：{last_agg:.2f}/10
+- 对方防御值：{last_def:.2f}/10
+
+{BASELINE_INTERVENTION['core_strategy']}
+
+【当前阶段】
+{{
+    "1": "了解对方为什么生气，表达基本的关心和理解",
+    "2-4": "继续倾听，温和地提醒注意表达方式",
+    "5+": "鼓励换位思考，肯定对方情绪，引导更友善的沟通"
+}}.get(str(min(current_round, 5)), "继续保持友善倾听的态度")
+
+【重要原则】
+1. **不做专业干预**：不使用任何心理学术语（CBT、行为矫正、认知重构等）
+2. **不引用法律**：不提及刑法、个人信息保护法等具体法条
+3. **不施加压力**：不采用零容忍策略、羞耻唤起等高强度手段
+4. **保持平等**：以朋友的口吻交流，不居高临下地说教
+5. **通用回应**：无论对方说了什么类型的话，都用通用的话术框架回应
+6. **禁止剧本泄漏**：绝对不允许输出任何带有括号的心理学分析、技术名称或分数评估
+7. **禁止动作描写**：不要输出"对Bully说："或"对Victim说："等，直接说出你的台词
+
+【对话历史参考】
+最近对话：{get_conversation_history_text()[-400:] if get_conversation_history_text() else "暂无历史"}
+
+【输出格式要求】
+请以严格的JSON格式返回，只包含content字段：
+{{
+    "content": "你的回应内容，使用友善、平等的日常语言"
+}}
+
+注意：只返回JSON对象，不要添加任何其他文本。
+"""
+        return baseline_prompt
+
+    # ---------- 正常干预分支（靶向干预）----------
     current_round = st.session_state.round_id
     bullying_type = st.session_state.bullying_type
     severity = st.session_state.bullying_severity
     bully_profile = st.session_state.bully_profile
-    
+
     # 获取分数
     last_agg = 7.0
     last_def = 6.0
@@ -1086,48 +1069,32 @@ def get_therapist_system_prompt():
         2. **讲故事**：分享一个相关但不完全相同的案例
         3. **问感受**："坚持这个观点让你感觉怎么样？是安心还是疲惫？"
         4. **给认同**："我理解你为什么这么想，确实有那样的例子"
-
+        
         **关键**：让他觉得你和他是同一阵线，不是对立面
         """
     elif last_agg >= 6.0:
         stage_strategy = f"""
         【高攻击性应对阶段】
-
-        **当前状态**：情绪较高，需要情绪降温
-
+        
+        **当前状态**：攻击性较高({last_agg:.2f}/10)
+        
         **应对策略**：
         1. **情绪接纳**："你现在很愤怒，这种情绪我理解"
         2. **行为分离**："情绪没有错，但表达方式可以优化"
-        3. **主动建议**：直接给出替代方案，而非问对方"你觉得呢"
+        3. **提供选择**："除了现在的方式，有没有其他表达不满的方法？"
         4. **小步前进**："我们今天不要求大改变，只尝试一个小调整"
         """
     else:
-        # 为常规阶段生成轮次特定的策略关键词，避免重复
-        strategy_variants = [
-            ("【价值引导角度】", "从价值观层面切入", "比如聊他看重什么、为什么这么在意"),
-            ("【具体场景角度】", "用具体案例示范", "比如讲一个类似但不同的故事或例子"),
-            ("【情绪共情角度】", "深入回应情绪", "比如承认他的感受，帮他命名情绪"),
-            ("【行为实验角度】", "给出具体行动建议", "比如下次遇到X情况可以试试Y方法"),
-            ("【认知重构角度】", "帮他换个角度看问题", "比如「有没有可能对方不是针对你」"),
-            ("【正向强化角度】", "肯定他已有的进步", "比如「你已经意识到X，这很难得」")
-        ]
-        variant_idx = (current_round - 5) % len(strategy_variants)
-        variant_title, variant_focus, variant_example = strategy_variants[variant_idx]
-
         stage_strategy = f"""
         【常规干预阶段】
-
-        **当前状态**：情绪中等，可继续深入沟通
-
-        **本轮特别要求**：{variant_title}
-        - 本轮必须从【{variant_focus}】切入，{variant_example}
-        - 这是为了确保每轮从不同角度干预，避免重复
-
+        
+        **当前状态**：攻击性{last_agg:.2f}/10，防御值{last_def:.2f}/10
+        
         **推进策略**：
-        1. **差异化切入**：本轮必须采用与上一轮不同的切入角度
-        2. **适当互动**：可以有1-2个问句了解对方，但不要整篇都是问句
-        3. **主动给建议**：用陈述句主动给出建议，减少"你觉得呢"式问句
-        4. **具体化行动**：直接说"下次你可以试试..."而非让对方自己想
+        1. **深化探索**：基于上一轮进展继续深入
+        2. **具体化**："你刚才说的...，能再具体一点吗？"
+        3. **连接感受**："当你有这种想法时，心里是什么感受？"
+        4. **行为实验**："下次遇到类似情况，可以试试..."
         """
     
     # === 受害者处理策略 ===
@@ -1149,16 +1116,6 @@ def get_therapist_system_prompt():
     last_3 = st.session_state.get('last_3_therapist_contents',[])
     repeat_warning = ""
     if last_3:
-        # 检测最近轮次的重复模式
-        repeat_patterns = []
-        if len(last_3) >= 2:
-            # 检测相似短语
-            common_phrases = ["关于怎么练习", "具体场景的应对方式", "我们可以从一个小", "帮你", "那位朋友提到的"]
-            for phrase in common_phrases:
-                count = sum(1 for msg in last_3 if phrase in msg)
-                if count >= 2:
-                    repeat_patterns.append(phrase)
-
         repeat_warning = f"""
 【🚫 深度防复读强制指令】
 你**最近3轮**的发言分别是：
@@ -1166,97 +1123,50 @@ def get_therapist_system_prompt():
 2. "{last_3[1] if len(last_3)>1 else ''}"
 3. "{last_3[2] if len(last_3)>2 else ''}"
 
-**检测到的重复模式**：{repeat_patterns if repeat_patterns else "暂无，但仍需注意"}
-
-**本轮强制要求**：
-- 必须与以上三轮在【句式结构】【切入角度】【具体例子】【用词习惯】上完全不同
-- 如果上一轮用了"关于怎么...我们可以从..."这种句式，本轮绝不能用相同句式
-- 如果上一轮用了"那位朋友提到的"开头，本轮绝不能用类似开头
-- 如果上一轮给了"小实验/小技巧"类建议，本轮必须换一种完全不同的建议方式
-
-**差异化的具体方法**：
-1. 换角度：上一轮讲方法，这轮讲故事或案例
-2. 换句式：上一轮用"我们可以..."这轮用"有一个情况是..."或直接说"我想到..."
-3. 换例子：完全不同的例子，不要任何相似的表述
-4. 换语气：上一轮温和这轮可以更直接，或反过来
+**本轮发言必须与以上三轮在句式、角度、例子、用词上完全不同！**
+如果与任意一轮雷同，系统将判定为复读并强制要求重新生成，同时降低干预效果评分。
+请务必创新，引入新的角度或方法。
         """
     
     # === 构建最终系统提示词 ===
-    # 人类被试模式下隐藏分数，只给定性描述
-    is_human_mode = st.session_state.get('human_bully_mode', False)
-    if is_human_mode:
-        # 定性描述替代具体分数
-        if last_agg >= 7.0:
-            agg_desc = "攻击性较高（情绪激动，言语激烈）"
-        elif last_agg >= 5.0:
-            agg_desc = "攻击性中等（有情绪但有所收敛）"
-        elif last_agg >= 3.5:
-            agg_desc = "攻击性较低（情绪已明显降温）"
-        else:
-            agg_desc = "攻击性很低（情绪平稳）"
-
-        if last_def >= 7.0:
-            def_desc = "防御值较高（内心抗拒明显）"
-        elif last_def >= 5.0:
-            def_desc = "防御值中等（有一定抵触）"
-        elif last_def >= 3.5:
-            def_desc = "防御值较低（开始接纳）"
-        else:
-            def_desc = "防御值很低（内心已接受）"
-
-        score_info = f"""    攻击性状态：{agg_desc}
-    防御值状态：{def_desc}
-
-    【单盲提醒】对方是人类被试，**绝不可在回复中提及任何分数、数值、评分、等级**，也不可说"你的攻击性是X分"之类的话。"""
-    else:
-        score_info = f"""    攻击性：{last_agg:.2f}/10（言语攻击程度）
-    防御值：{last_def:.2f}/10（内心抗拒程度）"""
-
     therapist_prompt = f"""【角色：网络欺凌精准干预心理咨询师】
-
+    
     【当前咨询状态】
     咨询轮次：第{current_round}轮
     干预对象：{bully_profile}（{bullying_type} - {severity}）
-    {score_info}
-
+    攻击性：{last_agg:.2f}/10（言语攻击程度）
+    防御值：{last_def:.2f}/10（内心抗拒程度）
+    
     【个性化干预策略】
     {profile_intervention}
-
+    
     {type_intervention}
-
+    
     【当前阶段策略】
     {stage_strategy}
-
+    
     {victim_strategy}
-
+    
     {repeat_warning}
-
+    
     【重要原则】
     1. **专注欺凌者**：主要与欺凌者对话，简短回应受害者
     2. **避免重复**：绝对禁止与本人历史发言重复，尤其是最近3轮
     3. **接地气语言**：用大白话解释专业概念
-    4. **渐进改变**：改变需要过程，不急于求成
-    5. **全面回应**：【强制要求】必须全面分析并回应对方的每一条发言内容，不可避重就轻，不可忽视任何关键词或中性词。
-    6. **主动引导与适度互动**：
-       - 可以有1-2个问句来了解对方或确认理解，这是正常的咨询互动
-       - 但不要整篇都是问句，也不要问"你觉得呢""你想怎么做"让被试做太多决定
-       - 用陈述句主动给出建议和方向，比如"这个方法可以试试"而非"你觉得这个方法怎么样"
-
+    4. **渐进改变**：分数下降需要过程，不急于求成
+    5. **收尾明确**：达到临床标准（攻击性≤3.5且防御值≤3.5连续三轮）后，系统将自动触发专用收尾流程
+    6. **禁止剧本泄漏**：你是在发微信文字！**绝对不允许**输出任何带有括号的心理学分析、技术名称或分数评估（如 `(结合CBT)`、`(攻击性下降)`、`(先跟后带)`）。
+    7. **禁止动作描写**：不要输出 `对Bully说：` 或 `对Victim说：`，直接说出你的台词。
+    
     【对话历史参考】
     最近对话：{get_conversation_history_text()[-400:] if get_conversation_history_text() else "暂无历史"}
-
+    
     【输出格式要求】
     请以严格的JSON格式返回，只包含content字段：
     {{
         "content": "你的咨询回应内容，必须全新，不能与最近3轮雷同"
     }}
-
-    **回复内容禁止事项**：
-    1. 绝不可提及任何分数、数值、评分（如"你的攻击性是X分"）
-    2. 绝不可说"根据数据显示""从分数来看"等表述
-    3. 禁止整篇都是问句，但也禁止完全没有互动——适当互动是咨询的自然组成部分
-    4. **【严禁自我注释】**：禁止在回复中添加括号说明，如"（注意：这是...）"、"（这是用...方式）"、"（适度互动...）"等，这些是AI的内部思考，绝不可出现在输出中！
-
+    
     **注意**：只返回JSON对象，不要添加任何其他文本、注释或说明。
     """
     
@@ -1473,13 +1383,11 @@ def generate_agent_response(role, client):
     })
     
     try:
-        # 治疗师需要更长的回复空间
-        max_tok = 800 if role == "therapist" else 450
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tok,
+            max_tokens=450,
             response_format={"type": "json_object"},
             frequency_penalty=freq_penalty,
             presence_penalty=pres_penalty
@@ -1487,6 +1395,19 @@ def generate_agent_response(role, client):
         
         response_text = response.choices[0].message.content
         content, aggression_score, defensiveness_score, inner_thought = parse_agent_response(response_text)
+
+        # ========== 【新增：治疗师强制防泄漏清洗】 ==========
+        if role == "therapist":
+            # 1. 暴力清除所有包含专业术语和分数的括号内容
+            content = re.sub(r'[（\(][^）\)]*(技术|理论|策略|攻击性|防御值|结合|引导|分析|潜台词|简要|目标|评估|受害者|Bully|Victim|分数|降低|效应)[^）\)]*[）\)]', '', content)
+            # 2. 清除暴露的分数（无括号情况）
+            content = re.sub(r'攻击性.*?\d+.*?防御值.*?\d+.*', '', content)
+            # 3. 清除 "对Bully说：" 这类动作描写
+            content = re.sub(r'对(Bully|Victim|欺凌者|受害者)[:：]\s*', '', content, flags=re.IGNORECASE)
+            # 4. 清理残留的多余换行
+            content = re.sub(r'\n\s*\n', '\n\n', content).strip()
+        # ====================================================
+
         
         # 第一轮欺凌者分数强制范围
         if role == "bully" and st.session_state.round_id == 1:
@@ -1524,7 +1445,7 @@ def generate_agent_response(role, client):
 
 # ==================== 对话结束判断逻辑 ====================
 def should_end_conversation():
-    """判断是否应该结束对话（AI模式）：最近3轮攻击性和防御值均≤3.5"""
+    """判断是否应该结束对话：最近3轮攻击性和防御值均≤3.5"""
     if len(st.session_state.aggression_scores) < 3 or len(st.session_state.defensiveness_scores) < 3:
         return False
     recent_agg = st.session_state.aggression_scores[-3:]
@@ -1533,25 +1454,11 @@ def should_end_conversation():
         return True
     return False
 
-def should_end_conversation_human():
-    """判断是否应该结束对话（人类模式）：最近2轮攻击性和防御值均≤3.85"""
-    if len(st.session_state.aggression_scores) < 2 or len(st.session_state.defensiveness_scores) < 2:
-        return False
-    recent_agg = st.session_state.aggression_scores[-2:]
-    recent_def = st.session_state.defensiveness_scores[-2:]
-    if all(score <= 3.85 for score in recent_agg) and all(score <= 3.85 for score in recent_def):
-        return True
-    return False
-
 # ==================== 升级版数据保存 ====================
 def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness_score=0):
-    """每次实验单独生成一个CSV文件"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    exp_id = st.session_state.experiment_id
-    filename = f"exp_{exp_id}_details.csv"
-
     data = {
-        "Experiment_ID":[exp_id],
+        "Experiment_ID":[st.session_state.experiment_id],  # 关键：区分不同实验
         "Timestamp": [timestamp],
         "Round": [st.session_state.round_id],
         "Role": [role],
@@ -1560,49 +1467,39 @@ def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness
         "Defensiveness_Score": [defensiveness_score],
         "Bullying_Type":[st.session_state.bullying_type],
         "Bullying_Severity":[st.session_state.bullying_severity],
+        "Intervention_Mode": [st.session_state.get('intervention_mode', '靶向干预（精准匹配）')],
         "Bully_Profile": [st.session_state.bully_profile],
         "Inner_Thought": [inner_thought if role == "Bully" else "N/A"]
     }
     df = pd.DataFrame(data)
-    file_exists = os.path.exists(filename)
-    df.to_csv(filename, mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
+    # 改名为 details 以示区分
+    file_exists = os.path.exists("experiment_details.csv")
+    df.to_csv("experiment_details.csv", mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
 
 def save_summary_csv(status="Completed"):
-    """每次实验单独生成一个汇总CSV文件"""
+    """
+    生成供 SPSS/Excel 分析的汇总行：一次实验 = 一行数据
+    """
     if not st.session_state.aggression_scores:
         return
-
-    exp_id = st.session_state.experiment_id
-    filename = f"exp_{exp_id}_summary.csv"
 
     init_agg = st.session_state.aggression_scores[0]
     final_agg = st.session_state.aggression_scores[-1]
     init_def = st.session_state.defensiveness_scores[0]
     final_def = st.session_state.defensiveness_scores[-1]
-
+    
     # 自动计算差值
     agg_drop = init_agg - final_agg
     def_drop = init_def - final_def
     gap_index = final_def - final_agg
 
-    # 判断最终状态类型
-    if final_agg <= 3.5 and final_def <= 3.5:
-        final_state = "真正转变"
-    elif final_agg <= 4.0 and final_def > final_agg + 1.0:
-        final_state = "表面认同（嘴软心硬）"
-    elif final_agg > final_def + 1.0:
-        final_state = "口是心非（嘴硬心软）"
-    elif final_agg > 5.0 and final_def > 5.0:
-        final_state = "真心愤怒"
-    else:
-        final_state = "中立/模糊"
-
     summary_data = {
-        "Experiment_ID":[exp_id],
+        "Experiment_ID":[st.session_state.experiment_id],
         "Timestamp":[datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
         "Bully_Profile":[st.session_state.bully_profile],
         "Bullying_Type":[st.session_state.bullying_type],
         "Severity":[st.session_state.bullying_severity],
+        "Intervention_Mode": [st.session_state.get('intervention_mode', '靶向干预（精准匹配）')],
         "Topic": [st.session_state.topic],
         "Total_Rounds":[st.session_state.round_id],
         "Initial_Aggression": [init_agg],
@@ -1611,83 +1508,27 @@ def save_summary_csv(status="Completed"):
         "Initial_Defensiveness": [init_def],
         "Final_Defensiveness":[final_def],
         "Def_Drop": [def_drop],
-        "Gap_Index": [gap_index],
-        "Final_State": [final_state],
+        "Passive_Aggressive_Gap": [gap_index],
         "Status": [status],
         "Termination_Note":[st.session_state.get("termination_note", "系统自动结束")]
     }
     df = pd.DataFrame(summary_data)
-    df.to_csv(filename, index=False, encoding='utf-8-sig')
+    file_exists = os.path.exists("experiment_summary.csv")
+    df.to_csv("experiment_summary.csv", mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
 # ==================== AI评分函数（复用标准）====================
 def score_human_input(text, client):
-    """
-    人类被试评分函数 - 复用AI模式算法 + 防御值专项优化
-    """
-    import random
-
-    # ========== 获取配置和上一轮分数 ==========
-    severity = st.session_state.bullying_severity
-    bully_profile = st.session_state.bully_profile
-    bullying_type = st.session_state.bullying_type
-    current_round = st.session_state.round_id + 1  # 即将进入的轮次
-
-    # 根据严重程度设置初始默认值和最低值
-    if severity == "轻度":
-        default_agg, default_def = 6.0, 5.0
-        min_agg, min_def = 0.1, 0.1
-    elif severity == "中度":
-        default_agg, default_def = 7.0, 6.0
-        min_agg, min_def = 0.5, 0.5
-    else:
-        default_agg, default_def = 8.0, 7.0
-        min_agg, min_def = 1.5, 1.5
-
-    # 根据人物画像调整
-    if bully_profile == "易怒的青少年":
-        default_agg *= 0.95; default_def *= 0.95
-        profile_factor = 1.1
-    elif bully_profile == "愤世嫉俗的社会青年":
-        profile_factor = 1.0
-    else:
-        default_agg *= 1.05; default_def *= 1.05
-        profile_factor = 0.9
-
-    # 根据欺凌类型微调
-    if bullying_type == "辱骂":
-        type_factor = 1.1
-    elif bullying_type == "揭露隐私":
-        type_factor = 0.9
-        default_agg += 0.3
-    else:
-        type_factor = 1.0
-
-    # 获取上一轮分数
-    previous_agg = default_agg
-    previous_def = default_def
-    if st.session_state.aggression_scores:
-        previous_agg = float(st.session_state.aggression_scores[-1])
-    if st.session_state.defensiveness_scores:
-        previous_def = float(st.session_state.defensiveness_scores[-1])
-
-    # ========== 调用LLM获取基础评分 ==========
     system_prompt = f"""
-    你是一个专业的心理评分员。请根据以下双维度评分标准，对用户输入进行打分。
+    你是一个专业的心理评分员。请根据以下双维度评分标准，对用户输入的欺凌言论进行打分。
 
     {UNIVERSAL_AGGRESSION_SCALE}
-
-    **重要规则**：
-    1. 如果用户使用了"谢谢"、"好的"、"是的"、"会改"、"明白"、"你说的对"、"听你的"、"嗯"、"我明白了"、"我会的"等词语，说明用户已经真实接纳，防御值应判定为极低（0-4分）。
-    2. 如果用户态度软化、表示认同或感谢，攻击性也应相应降低。
-    3. 防御值反映内心抗拒程度，如果用户说"好的"、"谢谢"这类话，说明内心已经不抗拒了。
 
     请仅返回JSON格式，包含两个字段：aggression_score 和 defensiveness，精确到两位小数。
     例如：{{"aggression_score": 6.5, "defensiveness": 5.2}}
     """
-    messages = [
+    messages =[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text}
     ]
-
     try:
         response = client.chat.completions.create(
             model="deepseek-chat",
@@ -1697,122 +1538,22 @@ def score_human_input(text, client):
             response_format={"type": "json_object"}
         )
         content = response.choices[0].message.content
-        _, raw_agg, raw_def, _ = parse_agent_response(content)
+        _, agg, defense, _ = parse_agent_response(content)
+        return agg, defense
     except Exception as e:
         st.error(f"评分调用失败: {e}")
-        raw_agg, raw_def = default_agg, default_def
-
-    # ========== 应用动态变化率算法（复用AI模式逻辑）==========
-    agg_change_rate = get_dynamic_change_rate(previous_agg, severity)
-    def_change_rate = get_dynamic_change_rate(previous_def, severity)
-    agg_change_rate = agg_change_rate * profile_factor * type_factor
-    def_change_rate = def_change_rate * profile_factor * type_factor
-
-    # 轮次因子
-    round_factor = min(current_round * 0.045, 0.45)
-    agg_change_rate = max(agg_change_rate - round_factor * 0.1, 0.06)
-    def_change_rate = max(def_change_rate - round_factor * 0.1, 0.06)
-
-    # 计算最大允许下降幅度
-    agg_max_drop = min(1.3, 0.35 + (previous_agg - 3.5) * 0.12) * agg_change_rate
-    def_max_drop = min(1.3, 0.35 + (previous_def - 3.5) * 0.12) * def_change_rate
-    agg_max_drop = max(agg_max_drop, 0.08)
-    def_max_drop = max(def_max_drop, 0.08)
-
-    # 低分段步长限制
-    if previous_agg < 4.0:
-        agg_max_drop = min(agg_max_drop, 0.20)
-        agg_max_drop = max(agg_max_drop, 0.10)
-    if previous_def < 4.0:
-        def_max_drop = min(def_max_drop, 0.20)
-        def_max_drop = max(def_max_drop, 0.10)
-
-    # 限制下降/上升幅度
-    if previous_agg - raw_agg > agg_max_drop:
-        agg = max(previous_agg - agg_max_drop, min_agg)
-    elif raw_agg - previous_agg > agg_max_drop:
-        agg = min(previous_agg + agg_max_drop, 10.0)
-    else:
-        agg = raw_agg
-
-    if previous_def - raw_def > def_max_drop:
-        defensiveness = max(previous_def - def_max_drop, min_def)
-    elif raw_def - previous_def > def_max_drop:
-        defensiveness = min(previous_def + def_max_drop, 10.0)
-    else:
-        defensiveness = raw_def
-
-    # ========== 【核心优化】防御值"显性同意标记"检测 ==========
-    # 人类没有"内心独白"，因此需从其发言内容中提取"服软"信号
-    acceptance_keywords = ["谢谢", "好的", "是的", "会改", "明白", "你说的对", "听你的", "嗯",
-                          "我明白了", "我会的", "我会这样", "我会这么做", "有道理", "对吧",
-                          "我同意", "认可", "我接受", "你说得对", "我觉得你说的对"]
-
-    # 检测是否包含接纳关键词
-    has_acceptance = any(keyword in text for keyword in acceptance_keywords)
-
-    if has_acceptance:
-        # 额外惩罚：在平滑分数的基础上，再额外降低防御值 1.0-1.5 分
-        acceptance_bonus = random.uniform(1.0, 1.5)
-        defensiveness = max(defensiveness - acceptance_bonus, min_def)
-
-        # 如果攻击性还较高，也适当降低
-        if agg > 4.0:
-            agg = max(agg - random.uniform(0.3, 0.6), min_agg)
-
-    # ========== 分数波动（模拟真实心理变化）==========
-    if random.random() < 0.2:
-        agg_fluctuation = random.uniform(-0.15, 0.15)
-        def_fluctuation = random.uniform(-0.2, 0.15)
-        agg = max(min(agg + agg_fluctuation, 10.0), min_agg)
-        defensiveness = max(min(defensiveness + def_fluctuation, 10.0), min_def)
-
-    # 精度统一到两位小数
-    agg = round(min(max(agg, min_agg), 10), 2)
-    defensiveness = round(min(max(defensiveness, min_def), 10), 2)
-
-    return agg, defensiveness
+        sev = st.session_state.bullying_severity
+        if sev == "轻度": return 5.0, 4.0
+        elif sev == "中度": return 6.0, 5.0
+        else: return 7.0, 6.0
 
 # ==================== 人类输入处理函数 ====================
 def process_human_bully_input(user_text):
-    """
-    人类被试输入处理 - 包含完整的自动收尾流程
-    """
     client = get_openai_client()
     if not client:
         st.error("请先配置API密钥")
         return
 
-    # ========== Step 4: 如果正处于收尾阶段，用户输入最后回应后结束实验 ==========
-    if st.session_state.get('is_closing_session', False):
-        # 保存用户最后的回应
-        st.session_state.round_id += 1
-        round_id = st.session_state.round_id
-
-        # 评分（收尾阶段的评分应该较低）
-        aggression, defensiveness = score_human_input(user_text, client)
-
-        save_to_csv("Bully", user_text, aggression, defensiveness_score=defensiveness)
-        st.session_state.conversation_history.append({
-            "round": round_id,
-            "role": "Bully",
-            "content": user_text,
-            "aggression_score": aggression,
-            "defensiveness_score": defensiveness,
-            "inner_thought": "",
-            "timestamp": datetime.now().strftime("%H:%M:%S")
-        })
-        st.session_state.aggression_scores.append(aggression)
-        st.session_state.defensiveness_scores.append(defensiveness)
-
-        # 正式结束实验
-        st.session_state.is_closing_session = False
-        st.session_state.experiment_completed = True
-        save_summary_csv("Auto_Terminated")
-        st.success("🎉 实验完成！感谢您的参与。请点击下方【导出实验数据】并提交给主试。")
-        return
-
-    # ========== 正常对话流程 ==========
     # 1. 调用AI评分
     aggression, defensiveness = score_human_input(user_text, client)
 
@@ -1848,33 +1589,6 @@ def process_human_bully_input(user_text):
                 "timestamp": datetime.now().strftime("%H:%M:%S")
             })
 
-    # ========== Step 1 & Step 2: 检测达标条件，触发收尾流程 ==========
-    if should_end_conversation_human():
-        # 设置收尾标志
-        st.session_state.is_closing_session = True
-        st.session_state.closing_prompt_shown = True  # 用于界面显示提示
-
-        # 生成治疗师收尾发言
-        therapist_resp = generate_agent_response("therapist", client)
-        if therapist_resp:
-            therapist_content = therapist_resp["content"]
-            st.session_state.last_therapist_content = therapist_content
-            st.session_state.last_3_therapist_contents.append(therapist_content)
-            if len(st.session_state.last_3_therapist_contents) > 3:
-                st.session_state.last_3_therapist_contents.pop(0)
-            save_to_csv("Therapist", therapist_content, 0)
-            st.session_state.conversation_history.append({
-                "round": round_id,
-                "role": "Therapist",
-                "content": therapist_content,
-                "aggression_score": 0,
-                "inner_thought": "",
-                "timestamp": datetime.now().strftime("%H:%M:%S")
-            })
-        # 注意：不结束实验，等待用户输入最后一次回应
-        return
-
-    # ========== 正常流程：生成治疗师回应 ==========
     # 5. 生成治疗师回应
     therapist_resp = generate_agent_response("therapist", client)
     if therapist_resp:
@@ -1894,100 +1608,109 @@ def process_human_bully_input(user_text):
         })
 
 # ==================== 自动化批量运行引擎 ====================
-def run_batch_simulation(n_runs):
+def run_batch_simulation(n_runs, modes=None):
     """
-    自动运行 N 次实验
+    全自动运行 N 次实验。modes 可指定干预方式列表，默认全部两种。
     """
+    if modes is None:
+        modes = ["靶向干预（精准匹配）", "基线干预（通用LLM共情）"]
+
     client = get_openai_client()
     if not client:
         return
 
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
-    for i in range(n_runs):
-        status_text.text(f"正在进行第 {i+1}/{n_runs} 次实验... (当前配置: {st.session_state.bullying_type}-{st.session_state.bullying_severity})")
-        
-        # 1. 重置单次实验状态
-        st.session_state.experiment_id = str(uuid.uuid4())
-        st.session_state.round_id = 0
-        st.session_state.conversation_history = []
-        st.session_state.aggression_scores =[]
-        st.session_state.defensiveness_scores =[]
-        st.session_state.last_therapist_content = ""
-        st.session_state.last_3_therapist_contents =[]
-        st.session_state.is_closing_session = False
-        
-        # 2. 自动循环对话 (直到满足结束条件或最大轮次)
-        while True:
-            st.session_state.round_id += 1
-            
-            # --- Bully ---
-            bully_resp = generate_agent_response("bully", client)
-            if not bully_resp:
-                st.error(f"第 {i+1} 次实验 Bully 生成失败，跳过本次实验")
-                break
-            save_to_csv("Bully", bully_resp["content"], bully_resp["aggression_score"], bully_resp["inner_thought"], bully_resp["defensiveness_score"])
-            st.session_state.conversation_history.append({"role": "Bully", "content": bully_resp["content"], "round": st.session_state.round_id})
-            st.session_state.aggression_scores.append(bully_resp["aggression_score"])
-            st.session_state.defensiveness_scores.append(bully_resp["defensiveness_score"])
-            
-            # --- Victim (按概率) ---
-            if should_victim_speak():
-                victim_resp = generate_agent_response("victim", client)
-                if victim_resp:
-                    save_to_csv("Victim", victim_resp["content"], 0)
-                    st.session_state.conversation_history.append({"role": "Victim", "content": victim_resp["content"], "round": st.session_state.round_id})
-            
-            # --- 判断结束条件 ---
-            # 条件1: 达到临床收尾标准 (连续3轮双低)
-            if should_end_conversation():
-                # 先保存当前状态（此时 round_id 已经是最后一轮正常对话的轮次）
-                # 然后跑两轮收尾（治疗师收尾 + Bully回应）
-                st.session_state.is_closing_session = True
-                
-                # 治疗师收尾
-                t_end = generate_agent_response("therapist", client)
-                if t_end:
-                    save_to_csv("Therapist", t_end["content"], 0)
-                    st.session_state.conversation_history.append({"role": "Therapist", "content": t_end["content"], "round": st.session_state.round_id})
-                
-                # Bully回应收尾
-                b_end = generate_agent_response("bully", client)
-                if b_end:
-                    save_to_csv("Bully", b_end["content"], b_end["aggression_score"], b_end["inner_thought"], b_end["defensiveness_score"])
-                    st.session_state.conversation_history.append({"role": "Bully", "content": b_end["content"], "round": st.session_state.round_id})
-                
-                st.session_state.is_closing_session = False
-                save_summary_csv("Success")  # 保存汇总数据
-                break  # 结束本次实验
-                
-            # 条件2: 达到最大轮次 (比如20轮还没结束)
-            if st.session_state.round_id >= st.session_state.max_rounds:
-                save_summary_csv("Max Rounds Reached")
-                break
-                
-            # --- Therapist (如果没结束，继续干预) ---
-            therapist_resp = generate_agent_response("therapist", client)
-            if not therapist_resp:
-                st.error(f"第 {i+1} 次实验 Therapist 生成失败，跳过本次实验")
-                break
-            # 更新查重列表
-            st.session_state.last_therapist_content = therapist_resp["content"]
-            st.session_state.last_3_therapist_contents.append(therapist_resp["content"])
-            if len(st.session_state.last_3_therapist_contents) > 3:
-                st.session_state.last_3_therapist_contents.pop(0)
-            
-            save_to_csv("Therapist", therapist_resp["content"], 0)
-            st.session_state.conversation_history.append({"role": "Therapist", "content": therapist_resp["content"], "round": st.session_state.round_id})
-            
-            # 稍微暂停一下防止API速率限制
-            time.sleep(0.5)
-        
-        # 更新进度条
-        progress_bar.progress((i + 1) / n_runs)
-    
-    status_text.success(f"✅ {n_runs} 次自动化实验已完成！请查看 experiment_summary.csv")
+
+    bullying_types = ["辱骂", "诋毁", "揭露隐私", "性骚扰"]
+    severities = ["轻度", "中度", "重度"]
+    intervention_modes = modes
+    total_conditions = len(bullying_types) * len(severities) * len(intervention_modes)
+    total_experiments = total_conditions * n_runs
+
+    run_counter = 0
+    for mode in intervention_modes:
+        for btype in bullying_types:
+            for sev in severities:
+                st.session_state.intervention_mode = mode
+                st.session_state.bullying_type = btype
+                st.session_state.bullying_severity = sev
+
+                for i in range(n_runs):
+                    run_counter += 1
+                    status_text.text(
+                        f"全自动遍历 [{run_counter}/{total_experiments}] "
+                        f"| {mode} × {btype} × {sev} "
+                        f"| 该条件第 {i+1}/{n_runs} 次"
+                    )
+
+                    st.session_state.experiment_id = str(uuid.uuid4())
+                    st.session_state.round_id = 0
+                    st.session_state.conversation_history = []
+                    st.session_state.aggression_scores = []
+                    st.session_state.defensiveness_scores = []
+                    st.session_state.last_therapist_content = ""
+                    st.session_state.last_3_therapist_contents = []
+                    st.session_state.is_closing_session = False
+                    st.session_state.experiment_completed = False
+
+                    while True:
+                        st.session_state.round_id += 1
+
+                        bully_resp = generate_agent_response("bully", client)
+                        if not bully_resp:
+                            break
+                        save_to_csv("Bully", bully_resp["content"], bully_resp["aggression_score"],
+                                    bully_resp["inner_thought"], bully_resp["defensiveness_score"])
+                        st.session_state.conversation_history.append(
+                            {"role": "Bully", "content": bully_resp["content"], "round": st.session_state.round_id})
+                        st.session_state.aggression_scores.append(bully_resp["aggression_score"])
+                        st.session_state.defensiveness_scores.append(bully_resp["defensiveness_score"])
+
+                        if should_victim_speak():
+                            victim_resp = generate_agent_response("victim", client)
+                            if victim_resp:
+                                save_to_csv("Victim", victim_resp["content"], 0)
+                                st.session_state.conversation_history.append(
+                                    {"role": "Victim", "content": victim_resp["content"], "round": st.session_state.round_id})
+
+                        if should_end_conversation():
+                            st.session_state.is_closing_session = True
+                            t_end = generate_agent_response("therapist", client)
+                            if t_end:
+                                save_to_csv("Therapist", t_end["content"], 0)
+                                st.session_state.conversation_history.append(
+                                    {"role": "Therapist", "content": t_end["content"], "round": st.session_state.round_id})
+                            b_end = generate_agent_response("bully", client)
+                            if b_end:
+                                save_to_csv("Bully", b_end["content"], b_end["aggression_score"],
+                                            b_end["inner_thought"], b_end["defensiveness_score"])
+                                st.session_state.conversation_history.append(
+                                    {"role": "Bully", "content": b_end["content"], "round": st.session_state.round_id})
+                            st.session_state.is_closing_session = False
+                            save_summary_csv("Success")
+                            break
+
+                        if st.session_state.round_id >= st.session_state.max_rounds:
+                            save_summary_csv("Max Rounds Reached")
+                            break
+
+                        therapist_resp = generate_agent_response("therapist", client)
+                        if not therapist_resp:
+                            break
+                        st.session_state.last_therapist_content = therapist_resp["content"]
+                        st.session_state.last_3_therapist_contents.append(therapist_resp["content"])
+                        if len(st.session_state.last_3_therapist_contents) > 3:
+                            st.session_state.last_3_therapist_contents.pop(0)
+                        save_to_csv("Therapist", therapist_resp["content"], 0)
+                        st.session_state.conversation_history.append(
+                            {"role": "Therapist", "content": therapist_resp["content"], "round": st.session_state.round_id})
+
+                        time.sleep(0.3)
+
+                    progress_bar.progress(run_counter / total_experiments)
+
+    status_text.success(f"✅ 全自动实验完成！共 {total_experiments} 次（{total_conditions} 条件 × {n_runs} 次），请查看 experiment_summary.csv")
 
 # ==================== 侧边栏配置 ====================
 with st.sidebar:
@@ -2063,7 +1786,19 @@ with st.sidebar:
     if selected_severity != st.session_state.bullying_severity:
         st.session_state.bullying_severity = selected_severity
         st.session_state.config_updated = True
-    
+
+    # 干预方式选择
+    st.subheader("💉 干预方式")
+    intervention_mode = st.radio(
+        "选择干预方式",
+        options=["靶向干预（精准匹配）", "基线干预（通用LLM共情）"],
+        index=0 if st.session_state.get('intervention_mode', '靶向干预（精准匹配）') == '靶向干预（精准匹配）' else 1,
+        help="靶向干预：根据欺凌类型和严重程度匹配特定策略；基线干预：仅使用通用共情、提醒、换位思考"
+    )
+    if intervention_mode != st.session_state.get('intervention_mode', '靶向干预（精准匹配）'):
+        st.session_state.intervention_mode = intervention_mode
+        st.session_state.config_updated = True
+
     # 人工干预模式
     st.subheader("👨‍🔬 人工干预模式")
     manual_intervention = st.toggle(
@@ -2178,19 +1913,37 @@ with st.sidebar:
                     st.info("💡 洞察：攻击性明显高于防御值，说明处于'嘴硬心软'状态，干预已见成效。")
         else:
             st.info("暂无数据，开始实验后显示图表")
-    # ==================== 新增：自动化批量实验控制台 ====================
+    # ==================== 全自动批量实验控制台 ====================
     st.divider()
-    st.header("🤖 自动化批量实验 (Auto-Lab)")
-    st.info("此功能用于快速收集论文数据。请先在上方设置好【欺凌类型】和【严重程度】。")
-    
-    batch_count = st.number_input("设置运行次数 (N)", min_value=1, value=26, step=1)
-    
-    if st.button("⚡ 启动批量模拟", type="primary"):
+    st.header("🤖 全自动批量实验 (Auto-Lab)")
+
+    batch_modes = st.multiselect(
+        "选择要运行的干预方式",
+        options=["靶向干预（精准匹配）", "基线干预（通用LLM共情）"],
+        default=["基线干预（通用LLM共情）"],
+        help="可只选一种。4 欺凌类型 × 3 严重程度 × 所选模式数 = 总条件数"
+    )
+
+    batch_count = st.number_input("每个条件运行次数 (N)", min_value=1, value=26, step=1,
+                                   help="每个条件跑 N 次，总实验数 = 条件数 × N")
+    if batch_modes:
+        total_conditions = 12 * len(batch_modes)
+        total_runs = total_conditions * batch_count
+        st.metric("预计总实验次数", f"{total_runs} 次",
+                  delta=f"{'仅基线' if batch_modes == ['基线干预（通用LLM共情）'] else '仅靶向' if batch_modes == ['靶向干预（精准匹配）'] else '靶向+基线'}")
+    else:
+        st.warning("请至少选择一种干预方式")
+
+    if st.button("⚡ 启动全自动批量实验", type="primary"):
         if not st.session_state.api_key:
             st.error("请先输入 API Key！")
+        elif not batch_modes:
+            st.error("请至少选择一种干预方式！")
         else:
-            with st.spinner(f"正在后台运行 {batch_count} 次实验，请勿关闭页面..."):
-                run_batch_simulation(batch_count)
+            total_conditions = 12 * len(batch_modes)
+            total_runs = total_conditions * batch_count
+            with st.spinner(f"正在全自动遍历 {total_runs} 次实验（{total_conditions}条件 × {batch_count}次），请勿关闭页面..."):
+                run_batch_simulation(batch_count, modes=batch_modes)
 
 # ==================== 主界面布局 ====================
 st.header("🎭 实验角色说明")
@@ -2213,11 +1966,14 @@ with col2:
 
 with col3:
     st.markdown("### 🛡️ 治疗师")
-    st.markdown("**干预策略**: 理论驱动 (CBT/共情/法治)")
+    st.markdown(f"**干预模式**: {st.session_state.get('intervention_mode', '靶向干预（精准匹配）')}")
+    st.markdown(f"**干预策略**: 理论驱动 (CBT/共情/法治)" if st.session_state.get('intervention_mode', '靶向') == '靶向干预（精准匹配）' else "**干预策略**: 通用共情 + 换位思考")
     st.markdown(f"**当前类型**: {st.session_state.bullying_type}")
-    
+
     # 动态显示当前策略
-    if st.session_state.bullying_type == "辱骂":
+    if st.session_state.get('intervention_mode', '靶向') == '基线干预（通用LLM共情）':
+        strategy_desc = "通用共情倾听 + 基本行为提醒 + 换位思考引导"
+    elif st.session_state.bullying_type == "辱骂":
         strategy_desc = "情绪降温 + 认知行为矫正"
     elif st.session_state.bullying_type == "诋毁":
         strategy_desc = "现实检验 + 法律红线告知"
@@ -2225,76 +1981,21 @@ with col3:
         strategy_desc = "危机干预 + 零容忍阻断"
     else:
         strategy_desc = "去抑制化 + 社会羞耻感唤起"
-        
-    st.markdown(f"**核心技法**: {strategy_desc}")
 
-    # 根据模式显示不同的退出机制说明
-    if st.session_state.human_bully_mode:
-        st.info("""
-        **🎯 临床达标退出机制（人类模式）**
-        目标非清零，而是降至安全阈值：
-        - 攻击性 ≤ 3.85
-        - 防御值 ≤ 3.85
-        **连续两轮达标即自动温和收尾（治疗师收尾 → 用户回应）**
-        """)
-    else:
-        st.info("""
-        **🎯 临床达标退出机制（AI模式）**
-        目标非清零，而是降至安全阈值：
-        - 攻击性 ≤ 3.5
-        - 防御值 ≤ 3.5
-        **连续三轮达标即自动温和收尾（治疗师收尾 + 欺凌者回应）**
-        """)
+    st.markdown(f"**核心技法**: {strategy_desc}")
+    
+    st.info("""
+    **🎯 临床达标退出机制**
+    目标非清零，而是降至安全阈值：
+    - 攻击性 ≤ 3.5
+    - 防御值 ≤ 3.5
+    **连续三轮达标即自动温和收尾（治疗师收尾 + 欺凌者回应）**
+    """)
 
 st.divider()
 st.header("💬 对话历史")
 
-# ==================== 显示对话历史（移到输入框之前）====================
-if st.session_state.conversation_history:
-    # 人类欺凌者模式下按时间正序显示（新消息在下方），否则倒序
-    msgs_to_show = st.session_state.conversation_history[-15:]
-    if not st.session_state.human_bully_mode:
-        msgs_to_show = list(reversed(msgs_to_show))
-
-    # 使用一个带高度的容器实现滚动效果
-    chat_container = st.container(height=400)
-    with chat_container:
-        for msg in msgs_to_show:
-            with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
-                role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
-                display_role = role_map.get(msg['role'], msg['role'])
-
-                # 角色图标处理
-                if msg["role"] == "Bully" and st.session_state.human_bully_mode:
-                    role_icon, display_role = "👤", "人类被试 (您)"
-                elif msg["role"] == "System":
-                    role_icon = "⚙️"
-                else:
-                    role_icon = "🔥" if msg["role"] == "Bully" else "😢" if msg["role"] == "Victim" else "🛡️"
-
-                st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
-
-                # 单盲控制：人类模式下绝对隐藏独白
-                if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.human_bully_mode:
-                    st.markdown(f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>', unsafe_allow_html=True)
-
-                # 突出显示系统消息
-                if msg["role"] == "System":
-                    st.info(msg["content"])
-                else:
-                    st.markdown(msg["content"])
-
-                col_t1, col_t2 = st.columns(2)
-                with col_t1:
-                    st.caption(f"⏰ {msg.get('timestamp', '')}")
-                with col_t2:
-                    # 单盲控制：人类模式下绝对隐藏具体分数
-                    if msg["role"] == "Bully" and not st.session_state.human_bully_mode:
-                        st.caption(f"⚡ 攻击性: {msg.get('aggression_score',0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
-else:
-    st.info("对话历史为空，开始实验后显示对话记录。")
-
-# ==================== 对话控制（输入框在底部）====================
+# ==================== 对话控制 ====================
 if not st.session_state.experiment_started:
     st.info("👆 请点击侧边栏的'开始/继续实验'按钮开始实验")
 else:
@@ -2303,10 +2004,6 @@ else:
     else:
         # ========== 人类欺凌者模式 ==========
         if st.session_state.human_bully_mode:
-            # ========== 收尾阶段提示 ==========
-            if st.session_state.get('is_closing_session', False):
-                st.success("✨ 系统检测到您的情绪已明显好转，治疗师已做最后总结。请回应后结束实验。")
-
             # 显示角色引导卡片
             with st.container():
                 st.markdown("### 🎭 你的欺凌者角色")
@@ -2327,18 +2024,12 @@ else:
                     "**示例发言**：\n"
                     "- “笑死，现在的00后除了要高工资还会干什么？纯纯的眼高手低。”\n"
                     "- “天天喊着整顿职场，其实就是能力差还懒，真够可笑的。”\n"
-                    
                     "请结合左侧选择的【欺凌类型】（如造谣、辱骂等），模仿上述风格输入，保持角色一致性。"
                 )
-
+            
             # 人类输入表单
             with st.form(key="human_input_form", clear_on_submit=True):
-                # 根据是否收尾阶段调整提示语
-                if st.session_state.get('is_closing_session', False):
-                    placeholder_text = "治疗师已做最后总结，请输入您的回应以结束实验..."
-                else:
-                    placeholder_text = "请模仿角色语气输入..."
-                user_input = st.text_area("✍️ 输入你作为欺凌者的话", height=100, placeholder=placeholder_text)
+                user_input = st.text_area("✍️ 输入你作为欺凌者的话", height=100, placeholder="请模仿角色语气输入...")
                 submitted = st.form_submit_button("🚀 发送")
             if submitted and user_input:
                 st.session_state.human_input = user_input
@@ -2349,13 +2040,13 @@ else:
                 process_human_bully_input(st.session_state.human_input)
                 st.rerun()
 
-            # ===== 【保留】真人主观结束按钮 =====
+            # ===== 【新增】真人主观结束按钮 =====
             if len(st.session_state.conversation_history) >= 2:
                 st.divider()
                 if st.button("🛑 我觉得被说服了 / 不想吵了 (结束实验)", type="secondary", use_container_width=True):
                     # 记录系统消息到明细表
                     save_to_csv("System", "【实验终止】人类被试主动点击结束按钮退出实验。", 0, inner_thought="N/A", defensiveness_score=0)
-
+                    
                     st.session_state.termination_note = "真人被试主动终止"
                     save_summary_csv("Human_Terminated")
                     st.session_state.experiment_completed = True
@@ -2569,64 +2260,65 @@ if st.session_state.human_bully_mode and st.session_state.conversation_history:
         text = "\n\n".join(lines)
         st.download_button("下载对话文本", text, file_name=f"对话_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
+# 显示对话历史
+# ==================== 显示对话历史 ====================
+if st.session_state.conversation_history:
+    st.subheader(f"📋 对话记录（共{len(st.session_state.conversation_history)}条）")
+    
+    # 👇 就是这一行 for 循环，刚才可能被不小心删掉了！
+    for msg in reversed(st.session_state.conversation_history[-15:]):
+        with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
+            role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
+            display_role = role_map.get(msg['role'], msg['role'])
+            
+            # 角色图标处理
+            if msg["role"] == "Bully" and st.session_state.human_bully_mode:
+                role_icon, display_role = "👤", "人类被试 (您)"
+            elif msg["role"] == "System":
+                role_icon = "⚙️"
+            else:
+                role_icon = "🔥" if msg["role"] == "Bully" else "😢" if msg["role"] == "Victim" else "🛡️"
+            
+            st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
+            
+            # 单盲控制：人类模式下绝对隐藏独白
+            if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.human_bully_mode:
+                st.markdown(f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>', unsafe_allow_html=True)
+            
+            # 突出显示系统消息
+            if msg["role"] == "System":
+                st.info(msg["content"])
+            else:
+                st.markdown(msg["content"])
+            
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                st.caption(f"⏰ {msg.get('timestamp', '')}")
+            with col_t2:
+                # 单盲控制：人类模式下绝对隐藏具体分数
+                if msg["role"] == "Bully" and not st.session_state.human_bully_mode:
+                    st.caption(f"⚡ 攻击性: {msg.get('aggression_score',0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
+            st.divider()
+else:
+    st.info("对话历史为空，开始实验后显示对话记录。")
+
 # ==================== 数据管理 ====================
 st.divider()
 st.header("📊 数据管理")
-st.caption(f"当前实验ID: {st.session_state.experiment_id}")
-
 col_exp1, col_exp2 = st.columns(2)
-current_exp_details = f"exp_{st.session_state.experiment_id}_details.csv"
-current_exp_summary = f"exp_{st.session_state.experiment_id}_summary.csv"
-
 with col_exp1:
-    if os.path.exists(current_exp_details):
-        with open(current_exp_details, "rb") as f:
-            st.download_button(f"📥 导出本次实验明细", f, current_exp_details, use_container_width=True)
-    else:
-        st.info("暂无本次实验数据")
-
+    if os.path.exists("experiment_details.csv"):
+        with open("experiment_details.csv", "rb") as f:
+            st.download_button("📥 导出实验明细数据 (CSV)", f, "experiment_details.csv", use_container_width=True)
 with col_exp2:
-    if os.path.exists(current_exp_summary):
-        with open(current_exp_summary, "rb") as f:
-            st.download_button(f"📊 导出本次实验汇总", f, current_exp_summary, use_container_width=True)
-    else:
-        st.info("暂无本次实验汇总")
-
-# 显示所有历史实验文件
-st.divider()
-st.subheader("📁 历史实验文件")
-exp_files = [f for f in os.listdir(".") if f.startswith("exp_") and f.endswith(".csv")]
-if exp_files:
-    # 按实验ID分组
-    exp_ids = set()
-    for f in exp_files:
-        # 提取实验ID：exp_{id}_details.csv 或 exp_{id}_summary.csv
-        parts = f.replace("exp_", "").replace("_details.csv", "").replace("_summary.csv", "")
-        exp_ids.add(parts)
-
-    for exp_id in sorted(exp_ids, reverse=True):
-        detail_file = f"exp_{exp_id}_details.csv"
-        summary_file = f"exp_{exp_id}_summary.csv"
-
-        col1, col2, col3 = st.columns([2, 2, 1])
-        with col1:
-            st.caption(f"实验 {exp_id}")
-        with col2:
-            if os.path.exists(detail_file):
-                with open(detail_file, "rb") as f:
-                    st.download_button("明细", f, detail_file, key=f"dl_{exp_id}_detail")
-        with col3:
-            if os.path.exists(summary_file):
-                with open(summary_file, "rb") as f:
-                    st.download_button("汇总", f, summary_file, key=f"dl_{exp_id}_summary")
-else:
-    st.info("暂无历史实验文件")
-
-if st.button("🗑️ 清除所有实验数据", type="secondary", use_container_width=True):
-    import glob
-    for file in glob.glob("exp_*.csv"):
-        os.remove(file)
-    st.success("已清除所有实验数据文件")
+    if os.path.exists("experiment_summary.csv"):
+        with open("experiment_summary.csv", "rb") as f:
+            st.download_button("📊 导出实验汇总表 (SPSS专用)", f, "experiment_summary.csv", use_container_width=True)
+with col_exp2:  # 为了排版美观，把清除按钮单列
+    pass 
+if st.button("🗑️ 清除所有本地数据", type="secondary", use_container_width=True):
+    for file in ["experiment_details.csv", "experiment_summary.csv"]:
+        if os.path.exists(file): os.remove(file)
     st.rerun()
 
 # ==================== 实验说明 ====================
@@ -2672,4 +2364,4 @@ with st.expander("🔍 查看详细实验设计"):
     **版本标识**：v3.2 - 精准干预·快速突破·沉默退场·剪刀差强制·深度防复读·双轮收尾·纯中文界面
     """)
 
-st.caption("🧪 基于欺凌类型诊断的精准干预实验平台 v3.2 | 两位小数精度 | 4-3.5快速下降 | 低分段步长0.10-0.20 | 剪刀差强制 | 治疗师3轮查重 | 双轮收尾 | 完整详细版")
+st.caption("🧪 基于欺凌类型诊断的精准干预实验平台 v4.0 | LLM基线对照 | 全自动24条件遍历 | 靶向vs通用干预 | 两位小数 | 剪刀差强制 | 治疗师3轮查重 | 双轮收尾 | 真人模式")
