@@ -2239,6 +2239,55 @@ with st.sidebar:
                 run_batch_simulation(batch_count, modes=batch_modes)
 
 
+
+# ==================== 对话记录渲染函数 ====================
+def render_conversation_history(max_messages=15, empty_text="对话历史为空，开始实验后显示对话记录。"):
+    """统一渲染对话记录。
+    正式真人实验中采用“先看对话记录、再输入回应”的顺序；
+    对话按时间顺序显示，最新发言位于输入框上方，方便被试续接。
+    """
+    if st.session_state.conversation_history:
+        st.subheader(f"📋 对话记录（共{len(st.session_state.conversation_history)}条）")
+        st.caption("按时间顺序显示，最新发言在最下方。请先阅读上一轮回应，再在下方输入你的回答。")
+
+        for msg in st.session_state.conversation_history[-max_messages:]:
+            # 真人模式下：人类被试自己的发言显示为 user；系统角色显示为 assistant
+            chat_role = "user" if msg.get("role") == "Bully" else "assistant"
+            with st.chat_message(chat_role):
+                role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
+                display_role = role_map.get(msg.get('role'), msg.get('role', ''))
+
+                if msg.get("role") == "Bully" and st.session_state.get('human_bully_mode', False):
+                    role_icon, display_role = "👤", "人类被试（你）"
+                elif msg.get("role") == "System":
+                    role_icon = "⚙️"
+                else:
+                    role_icon = "🔥" if msg.get("role") == "Bully" else "😢" if msg.get("role") == "Victim" else "🛡️"
+
+                st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
+
+                # 单盲控制：人类模式下隐藏内心独白和具体评分
+                if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.get('human_bully_mode', False):
+                    st.markdown(
+                        f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>',
+                        unsafe_allow_html=True
+                    )
+
+                if msg.get("role") == "System":
+                    st.info(msg.get("content", ""))
+                else:
+                    st.markdown(msg.get("content", ""))
+
+                col_t1, col_t2 = st.columns(2)
+                with col_t1:
+                    st.caption(f"⏰ {msg.get('timestamp', '')}")
+                with col_t2:
+                    if msg.get("role") == "Bully" and not st.session_state.get('human_bully_mode', False):
+                        st.caption(f"⚡ 攻击性: {msg.get('aggression_score',0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
+                st.divider()
+    else:
+        st.info(empty_text)
+
 # ==================== 正式真人实验任务卡 ====================
 if st.session_state.get('human_bully_mode', False):
     st.divider()
@@ -2302,7 +2351,7 @@ with col3:
     """)
 
 st.divider()
-st.header("💬 对话历史")
+st.header("💬 对话交互")
 
 # ==================== 对话控制 ====================
 if not st.session_state.experiment_started:
@@ -2313,17 +2362,28 @@ else:
     else:
         # ========== 人类欺凌者模式 ==========
         if st.session_state.human_bully_mode:
-            # 显示正式实验角色任务卡片：不再使用固定示例，避免话题跑偏或前言不搭后语。
-            with st.container():
-                st.markdown("### 🎭 你的表达任务")
-                st.markdown(f"**当前表达方式**：{st.session_state.bullying_type}型—{st.session_state.bullying_severity}")
-                st.info(get_current_task_description())
-                st.warning("请围绕你自己填写的讨论话题进行表达；不要输入真实个人隐私、现实威胁、露骨性细节或可指向现实个人的信息。")
-            
-            # 人类输入表单
+            # 正式真人实验界面：先显示对话记录，再显示输入框，避免被试看不到上一轮回应。
+            st.markdown("### 🎭 你的表达任务")
+            st.markdown(f"**当前表达方式**：{st.session_state.bullying_type}型—{st.session_state.bullying_severity}")
+            st.info(get_current_task_description())
+            st.warning("请围绕你自己填写的讨论话题进行表达；不要输入真实个人隐私、现实威胁、露骨性细节或可指向现实个人的信息。")
+
+            st.divider()
+            render_conversation_history(
+                max_messages=20,
+                empty_text="当前还没有对话记录。请在下方输入你的第一句话，系统随后会生成对话对象和干预者的回应。"
+            )
+
+            st.markdown("### ✍️ 你的回应")
+            st.caption("请先阅读上方最新一轮对话，再在这里输入你作为欺凌者的回应。")
             with st.form(key="human_input_form", clear_on_submit=True):
-                user_input = st.text_area("✍️ 输入你作为欺凌者的话", height=100, placeholder="请模仿角色语气输入...")
-                submitted = st.form_submit_button("🚀 发送")
+                user_input = st.text_area(
+                    "输入内容",
+                    height=120,
+                    placeholder="请根据当前表达任务和上一轮对话输入……",
+                    label_visibility="collapsed"
+                )
+                submitted = st.form_submit_button("🚀 发送", use_container_width=True)
             if submitted and user_input:
                 st.session_state.human_input = user_input
                 st.session_state.need_process_human_input = True
@@ -2333,13 +2393,11 @@ else:
                 process_human_bully_input(st.session_state.human_input)
                 st.rerun()
 
-            # ===== 【新增】真人主观结束按钮 =====
+            # 真人主观结束按钮放在输入框下方，避免打断阅读对话记录
             if len(st.session_state.conversation_history) >= 2:
                 st.divider()
-                if st.button("🛑 我觉得被说服了 / 不想吵了 (结束实验)", type="secondary", use_container_width=True):
-                    # 记录系统消息到明细表
+                if st.button("🛑 我觉得被说服了 / 不想吵了（结束实验）", type="secondary", use_container_width=True):
                     save_to_csv("System", "【实验终止】人类被试主动点击结束按钮退出实验。", 0, inner_thought="N/A", defensiveness_score=0)
-                    
                     st.session_state.termination_note = "真人被试主动终止"
                     save_summary_csv("Human_Terminated")
                     st.session_state.experiment_completed = True
@@ -2554,46 +2612,9 @@ if st.session_state.human_bully_mode and st.session_state.conversation_history:
         st.download_button("下载对话文本", text, file_name=f"对话_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
 
 # 显示对话历史
-# ==================== 显示对话历史 ====================
-if st.session_state.conversation_history:
-    st.subheader(f"📋 对话记录（共{len(st.session_state.conversation_history)}条）")
-    
-    # 👇 就是这一行 for 循环，刚才可能被不小心删掉了！
-    for msg in reversed(st.session_state.conversation_history[-15:]):
-        with st.chat_message("user" if msg["role"] not in ["Therapist", "System"] else "assistant"):
-            role_map = {"Bully": "欺凌者", "Victim": "受害者", "Therapist": "治疗师", "System": "系统"}
-            display_role = role_map.get(msg['role'], msg['role'])
-            
-            # 角色图标处理
-            if msg["role"] == "Bully" and st.session_state.human_bully_mode:
-                role_icon, display_role = "👤", "人类被试 (您)"
-            elif msg["role"] == "System":
-                role_icon = "⚙️"
-            else:
-                role_icon = "🔥" if msg["role"] == "Bully" else "😢" if msg["role"] == "Victim" else "🛡️"
-            
-            st.markdown(f"**{role_icon} {display_role}** (第 {msg.get('round', '')} 轮)")
-            
-            # 单盲控制：人类模式下绝对隐藏独白
-            if msg.get("role") == "Bully" and msg.get("inner_thought") and not st.session_state.human_bully_mode:
-                st.markdown(f'<div style="color: #666; font-size: 0.85em; font-style: italic; margin-bottom: 6px; padding: 4px 8px; background-color: #f5f5f5; border-radius: 4px;">💭 心理潜台词: {msg["inner_thought"]}</div>', unsafe_allow_html=True)
-            
-            # 突出显示系统消息
-            if msg["role"] == "System":
-                st.info(msg["content"])
-            else:
-                st.markdown(msg["content"])
-            
-            col_t1, col_t2 = st.columns(2)
-            with col_t1:
-                st.caption(f"⏰ {msg.get('timestamp', '')}")
-            with col_t2:
-                # 单盲控制：人类模式下绝对隐藏具体分数
-                if msg["role"] == "Bully" and not st.session_state.human_bully_mode:
-                    st.caption(f"⚡ 攻击性: {msg.get('aggression_score',0):.2f}/10 | 🛡️ 防御值: {msg.get('defensiveness_score', 0):.2f}/10")
-            st.divider()
-else:
-    st.info("对话历史为空，开始实验后显示对话记录。")
+# 真人模式已经在输入框上方显示对话记录；AI模式仍在此处显示，避免重复。
+if not st.session_state.get('human_bully_mode', False):
+    render_conversation_history(max_messages=15)
 
 # ==================== 数据管理 ====================
 st.divider()
