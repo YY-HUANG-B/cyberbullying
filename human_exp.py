@@ -154,7 +154,10 @@ def init_session_state():
         'participant_id': "",
         'participant_group': "",
         'participant_link_mode': False,
-        'condition_locked_by_url': False
+        'condition_locked_by_url': False,
+        # ========== 新增：真人实验质量控制 ==========
+        'confirm_early_exit': False,
+        'last_input_warning': ""
     }
     
     for key, value in default_states.items():
@@ -1734,6 +1737,52 @@ def save_summary_csv(status="Completed"):
         _, backup_summary = _get_participant_backup_paths()
         backup_exists = os.path.exists(backup_summary)
         df.to_csv(backup_summary, mode='a', header=not backup_exists, index=False, encoding='utf-8-sig')
+
+# ==================== 真人实验质量控制辅助函数 ====================
+MIN_HUMAN_BULLY_ROUNDS = 7
+
+
+def _normalize_text_for_compare(text):
+    """用于判断“话题”和“第一句发言”是否基本相同，避免把话题误当成第一轮发言。"""
+    if text is None:
+        return ""
+    text = str(text).strip().lower()
+    text = re.sub(r"[\s\u3000]+", "", text)
+    text = re.sub(r"[，。！？、,.!?;；:：\"'“”‘’（）()\[\]【】<>《》]", "", text)
+    return text
+
+
+def get_human_bully_round_count():
+    """统计真人被试已经实际输入了几轮 Bully 发言。"""
+    return sum(1 for msg in st.session_state.get('conversation_history', []) if msg.get('role') == 'Bully')
+
+
+def is_probably_topic_instead_of_first_reply(user_text):
+    """第一轮时，如果被试把“讨论话题”原样粘到回应框里，则拦截并提示重新写第一句角色化发言。"""
+    if st.session_state.get('round_id', 0) != 0:
+        return False
+    topic_norm = _normalize_text_for_compare(st.session_state.get('topic', ''))
+    input_norm = _normalize_text_for_compare(user_text)
+    if not topic_norm or not input_norm:
+        return False
+    # 完全一致，或高度包含，通常说明被试把话题当成第一轮发言了。
+    if input_norm == topic_norm:
+        return True
+    if len(topic_norm) >= 4 and (input_norm in topic_norm or topic_norm in input_norm):
+        length_ratio = min(len(input_norm), len(topic_norm)) / max(len(input_norm), len(topic_norm))
+        if length_ratio >= 0.75:
+            return True
+    return False
+
+
+def end_human_experiment(status="Human_Terminated", note="真人被试主动终止"):
+    """统一处理真人被试主动结束，保证保存口径一致。"""
+    save_to_csv("System", f"【实验终止】{note}。", 0, inner_thought="N/A", defensiveness_score=0)
+    st.session_state.termination_note = note
+    save_summary_csv(status)
+    st.session_state.experiment_completed = True
+    st.session_state.confirm_early_exit = False
+
 # ==================== AI评分函数（真人输入专用：不套用仿真平滑规则）====================
 def score_human_input(text, client):
     system_prompt = f"""
@@ -2152,13 +2201,14 @@ with st.sidebar:
         if st.button("🔄 重置实验", use_container_width=True):
             for key in['conversation_history', 'round_id', 'aggression_scores', 'defensiveness_scores', 
                         'experiment_started', 'show_manual_input', 'experiment_completed', 'is_closing_session', 
-                        'last_therapist_content', 'last_3_therapist_contents']:
+                        'last_therapist_content', 'last_3_therapist_contents', 'confirm_early_exit',
+                        'human_input', 'need_process_human_input', 'last_input_warning']:
                 if key in st.session_state:
                     if key == 'round_id':
                         st.session_state[key] = 0
                     elif key in['aggression_scores', 'defensiveness_scores', 'conversation_history', 'last_3_therapist_contents']:
                         st.session_state[key] =[]
-                    elif key == 'last_therapist_content':
+                    elif key in ['last_therapist_content', 'human_input', 'last_input_warning']:
                         st.session_state[key] = ""
                     else:
                         st.session_state[key] = False
@@ -2379,34 +2429,63 @@ else:
             )
 
             st.markdown("### ✍️ 你的回应")
+            if not st.session_state.conversation_history:
+                st.warning("第一句话不是讨论话题本身。请按照上方分配的表达方式，围绕你填写的话题写出第一句角色化回应。")
             st.caption("请先阅读上方最新一轮对话，再在这里输入你作为欺凌者的回应。")
+            if st.session_state.get('last_input_warning'):
+                st.error(st.session_state.last_input_warning)
+
             with st.form(key="human_input_form", clear_on_submit=True):
                 user_input = st.text_area(
                     "输入内容",
                     height=120,
-                    placeholder="请根据当前表达任务和上一轮对话输入……",
+                    placeholder="不是填写话题；请根据当前表达任务，输入你在对话中要说的第一句话或下一句回应……",
                     label_visibility="collapsed"
                 )
                 submitted = st.form_submit_button("🚀 发送", use_container_width=True)
             if submitted and user_input:
-                st.session_state.human_input = user_input
-                st.session_state.need_process_human_input = True
-                st.rerun()
+                if is_probably_topic_instead_of_first_reply(user_input):
+                    st.session_state.last_input_warning = "检测到你输入的内容和讨论话题几乎一样。请不要把话题直接当成第一轮发言；请按照当前表达方式，围绕该话题写一句角色化回应。"
+                    st.rerun()
+                else:
+                    st.session_state.last_input_warning = ""
+                    st.session_state.human_input = user_input
+                    st.session_state.need_process_human_input = True
+                    st.rerun()
             if st.session_state.get('need_process_human_input', False):
                 st.session_state.need_process_human_input = False
+                st.session_state.confirm_early_exit = False
                 process_human_bully_input(st.session_state.human_input)
                 st.rerun()
 
-            # 真人主观结束按钮放在输入框下方，避免打断阅读对话记录
+            # 真人主观结束按钮放在输入框下方；7轮前允许退出，但需要二次确认并在数据中标记。
             if len(st.session_state.conversation_history) >= 2:
                 st.divider()
-                if st.button("🛑 我觉得被说服了 / 不想吵了（结束实验）", type="secondary", use_container_width=True):
-                    save_to_csv("System", "【实验终止】人类被试主动点击结束按钮退出实验。", 0, inner_thought="N/A", defensiveness_score=0)
-                    st.session_state.termination_note = "真人被试主动终止"
-                    save_summary_csv("Human_Terminated")
-                    st.session_state.experiment_completed = True
-                    st.success("✅ 实验结束！非常感谢您的参与。数据已自动保存。")
-                    st.rerun()
+                bully_rounds = get_human_bully_round_count()
+                if bully_rounds < MIN_HUMAN_BULLY_ROUNDS:
+                    st.caption(f"当前已完成 {bully_rounds} 轮被试回应。正式实验原则上建议不少于 {MIN_HUMAN_BULLY_ROUNDS} 轮。")
+                if st.session_state.get('confirm_early_exit', False) and bully_rounds < MIN_HUMAN_BULLY_ROUNDS:
+                    st.warning(f"当前不足 {MIN_HUMAN_BULLY_ROUNDS} 轮。若被试确实不想继续，可以仍然结束；数据会标记为提前终止。")
+                    col_exit1, col_exit2 = st.columns(2)
+                    with col_exit1:
+                        if st.button("仍然结束实验", type="secondary", use_container_width=True):
+                            note = f"真人被试主动提前终止（不足{MIN_HUMAN_BULLY_ROUNDS}轮；实际{bully_rounds}轮）"
+                            end_human_experiment("Human_Early_Terminated", note)
+                            st.success("✅ 实验已结束并标记为提前终止，数据已自动保存。")
+                            st.rerun()
+                    with col_exit2:
+                        if st.button("继续完成对话", type="primary", use_container_width=True):
+                            st.session_state.confirm_early_exit = False
+                            st.rerun()
+                else:
+                    if st.button("🛑 我觉得被说服了 / 不想吵了（结束实验）", type="secondary", use_container_width=True):
+                        if bully_rounds < MIN_HUMAN_BULLY_ROUNDS:
+                            st.session_state.confirm_early_exit = True
+                            st.rerun()
+                        else:
+                            end_human_experiment("Human_Terminated", "真人被试主动终止")
+                            st.success("✅ 实验结束！非常感谢您的参与。数据已自动保存。")
+                            st.rerun()
         else:
             # ========== AI模式（原样保留，不做任何改动）==========
             # 人工干预输入框
