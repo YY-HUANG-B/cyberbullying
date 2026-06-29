@@ -126,7 +126,7 @@ def init_session_state():
         'round_id': 0,
         'aggression_scores': [],
         'defensiveness_scores':[],
-        'topic': "现在的女生真是越来越物质了",
+        'topic': "",
         'api_key': os.getenv("DEEPSEEK_API_KEY", ""),
         'bully_profile': "易怒的青少年",
         'bullying_type': "辱骂",
@@ -807,12 +807,12 @@ def get_bully_system_prompt():
     如果发现自己想跑题，立刻拉回这个话题。
     
     **错误示范**（跑题）：
-    - 话题是"女生物质"，你却在骂"作业没写完"
-    - 话题是"物质"，你却在攻击"长得丑"
+    - 话题是"游戏争议"，你却突然攻击"学习成绩"
+    - 话题是"寝室矛盾"，你却突然转向无关的外貌评价
     
     **正确做法**：
-    - 所有攻击、比喻、例子都必须围绕"物质"相关
-    - 可以举拜金、彩礼、炫耀等具体例子
+    - 所有攻击、比喻、例子都必须围绕被试自己填写的话题展开
+    - 可以围绕该话题中的观点、行为、立场或冲突点进行表达
     """
     
     # === 语言多样性强制要求 ===
@@ -1303,9 +1303,9 @@ def get_victim_system_prompt():
         
         **话术示例**：
         "你为什么要这么说？我不明白..."
-        "你这样概括所有女生让我觉得委屈..."
-        "我身边就有很多不一样的例子..."
-        "请停止这种以偏概全的说法..."
+        "你这样概括别人让我觉得很不舒服..."
+        "事情不一定像你说得那么绝对..."
+        "请不要用这种方式评价别人..."
         
         **注意**：不要人身攻击，保持理性但坚定
         """
@@ -2031,7 +2031,8 @@ with st.sidebar:
         "讨论话题",
         value=st.session_state.topic,
         height=80,
-        help="设置智能体讨论的话题。Bully将基于此话题生成攻击性开场白。"
+        placeholder="请填写一个容易引发网络争执或负面反应的讨论话题",
+        help="正式真人实验中由被试填写。留空时不建议开始实验。"
     )
     if topic != st.session_state.topic:
         st.session_state.topic = topic
@@ -2140,10 +2141,13 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 开始/继续实验", use_container_width=True, type="primary"):
-            st.session_state.experiment_started = True
-            st.session_state.config_updated = False
-            st.session_state.experiment_completed = False
-            st.rerun()
+            if st.session_state.get('human_bully_mode', False) and not str(st.session_state.get('topic', '')).strip():
+                st.error("请先填写讨论话题，再开始实验。")
+            else:
+                st.session_state.experiment_started = True
+                st.session_state.config_updated = False
+                st.session_state.experiment_completed = False
+                st.rerun()
     with col2:
         if st.button("🔄 重置实验", use_container_width=True):
             for key in['conversation_history', 'round_id', 'aggression_scores', 'defensiveness_scores', 
@@ -2301,7 +2305,7 @@ if st.session_state.get('human_bully_mode', False):
     """)
     with st.expander("查看统一实验说明", expanded=False):
         st.markdown(GENERAL_PARTICIPANT_INSTRUCTION)
-    st.info("请先在侧边栏填写或确认讨论话题，然后点击“开始/继续实验”。正式链接会自动设置类型、严重程度和组别，被试不需要自行选择。")
+    st.info("请先填写讨论话题，然后点击“开始/继续实验”。正式链接会自动设置类型、严重程度和组别，被试不需要自行选择。")
 
 # ==================== 主界面布局 ====================
 st.header("🎭 实验角色说明")
