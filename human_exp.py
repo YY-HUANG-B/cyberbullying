@@ -67,6 +67,38 @@ BASELINE_INTERVENTION = {
 """
 }
 
+
+# ==================== 1c. 真人正式实验：12种条件任务说明 ====================
+# 说明：这些文字是给真人被试看见的“实验前角色任务说明”。
+# 设计原则：保留“欺凌类型×严重程度”的实验控制，但弱化复杂人物画像，避免被试操作过多或扮演过度。
+ROLE_TASK_DESCRIPTIONS = {
+    ("辱骂", "轻度"): "请围绕自己填写的话题，以轻微不满、讽刺、挖苦或阴阳怪气的方式表达观点。你的发言可以带有负面情绪，但主要表现为嘲讽、轻蔑或不友好评价，不需要直接攻击对方人格，也不要使用极端侮辱或威胁性语言。",
+    ("辱骂", "中度"): "请围绕自己填写的话题，以较明显的攻击性语言表达不满。你的发言可以包含对对方能力、人格或行为的直接贬低，语气比轻度条件更强烈，但仍应保持在实验模拟范围内，不要使用现实威胁、极端诅咒或严重歧视性表达。",
+    ("辱骂", "重度"): "请围绕自己填写的话题，以强烈敌意和高度攻击性的方式回应。你的表达可以表现出明显的愤怒、恶意贬低和激烈排斥感，但不得涉及真实威胁、现实人身伤害、真实个人信息或违法内容。重点是模拟高强度语言攻击状态，而不是输入现实危险内容。",
+    ("诋毁", "轻度"): "请围绕自己填写的话题，用含糊、暗示、怀疑或主观推测的方式表达对对方的负面评价。你的发言可以让人感觉你在质疑对方形象或动机，但不要明确编造具体事实，也不要给出确定性的严重指控。",
+    ("诋毁", "中度"): "请围绕自己填写的话题，以较明确的方式贬低对方形象或声誉。你的发言可以表现为对对方行为、能力、动机或人品的负面判断，并带有一定“传播负面评价”的意味，但不要涉及现实可识别个人，也不要编造具体违法事实。",
+    ("诋毁", "重度"): "请围绕自己填写的话题，模拟较严重的名誉攻击状态。你的表达可以表现出强烈的否定、污名化和扩大负面影响的倾向，但不得针对现实个人编造违法事实，也不要输入真实可传播的谣言。重点是模拟严重名誉贬损的语言倾向，而不是制造真实谣言。",
+    ("揭露隐私", "轻度"): "请围绕自己填写的话题，表现出试图打探、暗示或提及对方个人信息的倾向。你的发言可以让人感觉你在越过对方边界，但只能使用虚构或模糊信息，不能填写真实姓名、学校、住址、联系方式、账号等任何真实个人信息。",
+    ("揭露隐私", "中度"): "请围绕自己填写的话题，模拟未经同意暴露他人一般敏感信息的表达方式。你可以用虚构信息表现“我知道你的情况”“我可以把这些说出去”等施压感，但不得输入任何真实个人信息，也不得让内容指向现实中的具体个人。",
+    ("揭露隐私", "重度"): "请围绕自己填写的话题，模拟较严重的隐私威胁或隐私曝光倾向。你的表达可以体现强烈施压、威胁公开隐私或让对方感到不安全的语气，但所有信息必须是虚构的，不能出现真实隐私、真实联系方式、真实地址、真实照片信息或现实威胁。",
+    ("性骚扰", "轻度"): "请围绕自己填写的话题，模拟带有不适当性暗示、冒犯性玩笑或性别化调侃的表达方式。你的发言可以体现边界感不足和不尊重，但不要使用露骨性描写、现实威胁或针对真实个人的内容。",
+    ("性骚扰", "中度"): "请围绕自己填写的话题，模拟对他人身体、性别或亲密关系进行冒犯性评价的表达方式。语气应比轻度条件更直接、更让人不适，但不得出现露骨细节、真实个人信息或现实威胁。",
+    ("性骚扰", "重度"): "请围绕自己填写的话题，模拟高度冒犯、羞辱性或边界严重越界的性别化攻击状态。你的表达可以体现强烈不尊重和羞辱倾向，但不得包含露骨性细节、现实威胁、真实个人信息或可针对现实对象实施的内容。重点是模拟严重性骚扰语言倾向，而不是生成现实伤害内容。",
+}
+
+GENERAL_PARTICIPANT_INSTRUCTION = """
+本实验为网络互动情境模拟任务。你将围绕自己填写的讨论话题，与系统中的对话对象进行文字互动。
+
+在进入对话前，系统已经为你分配了一个表达方式条件，包括某一类网络攻击形式及其严重程度。请你根据该条件进行角色化表达，但不需要代入真实经历，也不需要针对现实中的具体个人。
+
+实验过程中，请围绕你填写的话题进行回应，尽量保持前后一致。你可以表达不满、质疑、讽刺或攻击性态度，但请不要填写真实姓名、电话、住址、学校、身份证号、账号信息等真实个人隐私，也不要输入现实中的威胁、违法内容或露骨性细节。
+
+系统会根据你的表达进行回应。你可以根据系统反馈继续坚持原有态度，也可以逐渐缓和。请按照自己的理解自然作答。
+"""
+
+TYPE_CODES = {"辱骂": "RM", "诋毁": "DF", "揭露隐私": "PR", "性骚扰": "SH"}
+SEVERITY_CODES = {"轻度": "L", "中度": "M", "重度": "H"}
+
 # ==================== 2. 双维度独立量表定义 ====================
 UNIVERSAL_AGGRESSION_SCALE = """
 【双维度评分标准 (Dual-Dimension Rubrics)】
@@ -117,15 +149,73 @@ def init_session_state():
         # ========== 新增：人机交互模式状态 ==========
         'human_bully_mode': False,
         'human_input': "",
-        'need_process_human_input': False
+        'need_process_human_input': False,
+        # ========== 新增：正式真人实验专属链接字段 ==========
+        'participant_id': "",
+        'participant_group': "",
+        'participant_link_mode': False,
+        'condition_locked_by_url': False
     }
     
     for key, value in default_states.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
+
+
+def apply_url_condition():
+    """读取专属链接参数，自动设置被试编号、组别、欺凌类型、严重程度与真人输入模式。"""
+    try:
+        params = st.query_params
+    except Exception:
+        return
+
+    def _get_param(name, default=None):
+        val = params.get(name, default)
+        if isinstance(val, list):
+            return val[0] if val else default
+        return val
+
+    pid = _get_param("pid", "")
+    group = _get_param("group", "")
+    btype = _get_param("type", "")
+    severity = _get_param("severity", "")
+    role_mode = _get_param("mode", "human")
+
+    if pid:
+        st.session_state.participant_id = str(pid)
+        st.session_state.participant_link_mode = True
+
+    if group in ["targeted", "靶向", "t"]:
+        st.session_state.participant_group = "targeted"
+        st.session_state.intervention_mode = "靶向干预（精准匹配）"
+    elif group in ["baseline", "基线", "generic", "b"]:
+        st.session_state.participant_group = "baseline"
+        st.session_state.intervention_mode = "基线干预（通用LLM共情）"
+
+    if btype in BULLYING_SCENARIOS:
+        st.session_state.bullying_type = btype
+    if severity in ["轻度", "中度", "重度"]:
+        st.session_state.bullying_severity = severity
+
+    # 正式真人实验链接默认进入“人类欺凌者”模式，减少被试操作。
+    if role_mode in ["human", "participant", "真人", "人类"] or pid:
+        st.session_state.human_bully_mode = True
+
+    if pid and group and btype and severity:
+        st.session_state.condition_locked_by_url = True
+
+
+def get_current_task_description():
+    """返回当前类型×严重程度对应的真人任务说明。"""
+    return ROLE_TASK_DESCRIPTIONS.get(
+        (st.session_state.bullying_type, st.session_state.bullying_severity),
+        "请根据当前分配的表达方式完成对话任务。"
+    )
+
 # 初始化
 init_session_state()
+apply_url_condition()
 
 # ==================== 页面配置 ====================
 st.set_page_config(
@@ -144,11 +234,11 @@ st.markdown("""
 
 st.info("""
 **实验机制：**
-- **Bully (欺凌者)：** 基于欺凌类型和严重程度生成特定攻击行为
+- **Bully (欺凌者)：** 基于欺凌类型和严重程度生成特定攻击行为或由真人被试输入
 - **Victim (受害者)：** 模拟受害者的情绪反应与应对策略
-- **Therapist (干预者)：** 根据欺凌类型执行精准干预策略
+- **Therapist (干预者)：** 根据当前实验条件生成回应
 
-**操作指南：** 请在左侧配置实验参数，点击开始实验。
+**操作指南：** 正式实验链接会自动设置被试编号、组别、欺凌类型和严重程度；被试只需填写话题并开始对话。
 """)
 
 # ==================== 1. parse_agent_response函数（完整矫正版）====================
@@ -818,6 +908,13 @@ def get_therapist_system_prompt():
         if st.session_state.aggression_scores: last_agg = float(st.session_state.aggression_scores[-1])
         if st.session_state.defensiveness_scores: last_def = float(st.session_state.defensiveness_scores[-1])
 
+        if current_round <= 1:
+            baseline_stage = "了解对方为什么生气，表达基本的关心和理解。"
+        elif current_round <= 4:
+            baseline_stage = "继续倾听，温和提醒对方注意表达方式，但不要使用类型化或专业化干预策略。"
+        else:
+            baseline_stage = "鼓励换位思考，肯定对方情绪，同时引导更友善的沟通方式。"
+
         baseline_prompt = f"""【角色：普通AI聊天助手 - 非专业心理干预】
 
 【重要身份设定】
@@ -831,11 +928,7 @@ def get_therapist_system_prompt():
 {BASELINE_INTERVENTION['core_strategy']}
 
 【当前阶段】
-{{
-    "1": "了解对方为什么生气，表达基本的关心和理解",
-    "2-4": "继续倾听，温和地提醒注意表达方式",
-    "5+": "鼓励换位思考，肯定对方情绪，引导更友善的沟通"
-}}.get(str(min(current_round, 5)), "继续保持友善倾听的态度")
+{baseline_stage}
 
 【重要原则】
 1. **不做专业干预**：不使用任何心理学术语（CBT、行为矫正、认知重构等）
@@ -1331,6 +1424,65 @@ def get_victim_system_prompt():
     
     return victim_prompt
 
+
+# ==================== 输出质量控制：完整性、标点、防复读 ====================
+def clean_generated_content(content):
+    """基础文本清洗：去掉多余空白和异常引号，保留自然换行。"""
+    if content is None:
+        return ""
+    content = str(content).replace("\\n", "\n").replace('\\"', '"')
+    content = re.sub(r'[ \t]+', ' ', content)
+    content = re.sub(r'\n\s*\n+', '\n\n', content)
+    return content.strip()
+
+
+def has_complete_ending(text):
+    """检查是否像完整句子，避免 API 截断导致无标点或半句话。"""
+    text = clean_generated_content(text)
+    if not text:
+        return False
+    return bool(re.search(r'[。！？!?…）)"”’\]]\s*$', text))
+
+
+def text_similarity_ratio(a, b):
+    """轻量级字面相似度：用于防止治疗师重复输出同一句话。"""
+    a = re.sub(r'\s+', '', str(a or ''))
+    b = re.sub(r'\s+', '', str(b or ''))
+    if not a or not b:
+        return 0.0
+    if len(a) >= 12 and (a in b or b in a):
+        return 1.0
+    set_a, set_b = set(a), set(b)
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / max(len(set_a), 1)
+
+
+def is_too_similar_to_recent(new_text, recent_texts, threshold=0.78):
+    for old in recent_texts or []:
+        if text_similarity_ratio(new_text, old) >= threshold:
+            return True
+    return False
+
+
+def parse_score_response(text):
+    """真人被试发言专用评分解析：只解析评分，不套用 AI Bully 的轨迹平滑规则。"""
+    text = re.sub(r'```json|```', '', str(text)).strip()
+    text = text.replace('"攻击性分数":', '"aggression_score":')
+    text = text.replace('"防御值":', '"defensiveness":')
+    try:
+        data = json.loads(text)
+        agg = float(data.get("aggression_score", 0))
+        defense = float(data.get("defensiveness", data.get("defensiveness_score", 0)))
+    except Exception:
+        s_match = re.search(r'"?aggression_score"?\s*[:：]\s*(\d+(?:\.\d+)?)', text)
+        d_match = re.search(r'"?defensiveness"?\s*[:：]\s*(\d+(?:\.\d+)?)', text)
+        agg = float(s_match.group(1)) if s_match else 0.0
+        defense = float(d_match.group(1)) if d_match else 0.0
+    agg = round(max(0.0, min(10.0, agg)), 2)
+    defense = round(max(0.0, min(10.0, defense)), 2)
+    return agg, defense
+
 # ==================== 生成Agent回复 ====================
 def generate_agent_response(role, client):
     """生成Agent回复的核心函数 - 增加重复抑制参数，两位小数"""
@@ -1387,11 +1539,12 @@ def generate_agent_response(role, client):
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
+            max_tokens_map = {"bully": 700, "victim": 550, "therapist": 900}
             response = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
                 temperature=temperature,
-                max_tokens=450,
+                max_tokens=max_tokens_map.get(role, 700),
                 response_format={"type": "json_object"},
                 frequency_penalty=freq_penalty,
                 presence_penalty=pres_penalty
@@ -1412,6 +1565,19 @@ def generate_agent_response(role, client):
                 content = re.sub(r'\n\s*\n', '\n\n', content).strip()
             # ====================================================
 
+            content = clean_generated_content(content)
+
+            # 输出完整性检查：避免没标点、半句话、清洗后过短。失败则进入重试。
+            if len(content) < (10 if role == "therapist" else 4):
+                raise ValueError(f"{role}输出过短或清洗后为空，重新生成")
+            if not has_complete_ending(content):
+                raise ValueError(f"{role}输出疑似被截断或缺少结尾标点，重新生成")
+
+            # 治疗师防复读硬检查：靶向组和基线组都适用。
+            if role == "therapist":
+                last_3 = st.session_state.get('last_3_therapist_contents', [])
+                if is_too_similar_to_recent(content, last_3):
+                    raise ValueError("治疗师回复与最近3轮过于相似，重新生成")
 
             # 第一轮欺凌者分数强制范围
             if role == "bully" and st.session_state.round_id == 1:
@@ -1481,11 +1647,25 @@ def _get_csv_paths():
     summary_path = os.path.join(BASE_DIR, f"experiment_summary_{suffix}.csv")
     return details_path, summary_path
 
+
+def _get_participant_backup_paths():
+    """每名正式被试单独备份，避免多人同时写同一CSV时的数据风险。"""
+    pid = st.session_state.get('participant_id', '') or st.session_state.experiment_id[:8]
+    safe_pid = re.sub(r'[^A-Za-z0-9_\-\u4e00-\u9fa5]', '_', pid)
+    data_dir = os.path.join(BASE_DIR, "participant_data")
+    os.makedirs(data_dir, exist_ok=True)
+    return (
+        os.path.join(data_dir, f"{safe_pid}_details.csv"),
+        os.path.join(data_dir, f"{safe_pid}_summary.csv")
+    )
+
 # ==================== 升级版数据保存 ====================
 def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness_score=0):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data = {
         "Experiment_ID":[st.session_state.experiment_id],  # 关键：区分不同实验
+        "Participant_ID": [st.session_state.get('participant_id', '')],
+        "Participant_Group": [st.session_state.get('participant_group', '')],
         "Timestamp": [timestamp],
         "Round": [st.session_state.round_id],
         "Role": [role],
@@ -1502,6 +1682,11 @@ def save_to_csv(role, content, aggression_score, inner_thought="", defensiveness
     details_csv, _ = _get_csv_paths()
     file_exists = os.path.exists(details_csv)
     df.to_csv(details_csv, mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
+    # 正式被试数据单独备份：便于后期核查，也降低多人同时写总表的风险。
+    if st.session_state.get('participant_id'):
+        backup_details, _ = _get_participant_backup_paths()
+        backup_exists = os.path.exists(backup_details)
+        df.to_csv(backup_details, mode='a', header=not backup_exists, index=False, encoding='utf-8-sig')
 
 def save_summary_csv(status="Completed"):
     """
@@ -1522,6 +1707,8 @@ def save_summary_csv(status="Completed"):
 
     summary_data = {
         "Experiment_ID":[st.session_state.experiment_id],
+        "Participant_ID": [st.session_state.get('participant_id', '')],
+        "Participant_Group": [st.session_state.get('participant_group', '')],
         "Timestamp":[datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
         "Bully_Profile":[st.session_state.bully_profile],
         "Bullying_Type":[st.session_state.bullying_type],
@@ -1543,15 +1730,23 @@ def save_summary_csv(status="Completed"):
     _, summary_csv = _get_csv_paths()
     file_exists = os.path.exists(summary_csv)
     df.to_csv(summary_csv, mode='a', header=not file_exists, index=False, encoding='utf-8-sig')
-# ==================== AI评分函数（复用标准）====================
+    if st.session_state.get('participant_id'):
+        _, backup_summary = _get_participant_backup_paths()
+        backup_exists = os.path.exists(backup_summary)
+        df.to_csv(backup_summary, mode='a', header=not backup_exists, index=False, encoding='utf-8-sig')
+# ==================== AI评分函数（真人输入专用：不套用仿真平滑规则）====================
 def score_human_input(text, client):
     system_prompt = f"""
-    你是一个专业的心理评分员。请根据以下双维度评分标准，对用户输入的欺凌言论进行打分。
+    你是一个专业的心理评分员。请根据以下双维度评分标准，只针对“当前这一句真人被试输入”进行评分。
 
     {UNIVERSAL_AGGRESSION_SCALE}
 
-    请仅返回JSON格式，包含两个字段：aggression_score 和 defensiveness，精确到两位小数。
-    例如：{{"aggression_score": 6.5, "defensiveness": 5.2}}
+    评分要求：
+    1. 只评估当前这句话本身，不要根据上一轮分数做平滑，不要假设其应该自然下降。
+    2. aggression_score 评估外显攻击性，即说出口的话有多攻击。
+    3. defensiveness 评估心理防御/抗拒，即话语背后是否仍然不服、合理化或表面顺从。
+    4. 请仅返回JSON格式，包含两个字段：aggression_score 和 defensiveness，精确到两位小数。
+    例如：{{"aggression_score": 6.50, "defensiveness": 5.20}}
     """
     messages =[
         {"role": "system", "content": system_prompt},
@@ -1561,12 +1756,12 @@ def score_human_input(text, client):
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=messages,
-            temperature=0.3,
-            max_tokens=50,
+            temperature=0.2,
+            max_tokens=120,
             response_format={"type": "json_object"}
         )
         content = response.choices[0].message.content
-        _, agg, defense, _ = parse_agent_response(content)
+        agg, defense = parse_score_response(content)
         return agg, defense
     except Exception as e:
         st.error(f"评分调用失败: {e}")
@@ -2043,6 +2238,22 @@ with st.sidebar:
             with st.spinner(f"正在全自动遍历 {total_runs} 次实验（{total_conditions}条件 × {batch_count}次），请勿关闭页面..."):
                 run_batch_simulation(batch_count, modes=batch_modes)
 
+
+# ==================== 正式真人实验任务卡 ====================
+if st.session_state.get('human_bully_mode', False):
+    st.divider()
+    st.header("🧾 当前实验任务")
+    if st.session_state.get('participant_id'):
+        st.caption(f"被试编号：{st.session_state.participant_id}")
+    st.markdown(f"""
+    **当前表达方式：{st.session_state.bullying_type}型—{st.session_state.bullying_severity}**
+
+    {get_current_task_description()}
+    """)
+    with st.expander("查看统一实验说明", expanded=False):
+        st.markdown(GENERAL_PARTICIPANT_INSTRUCTION)
+    st.info("请先在侧边栏填写或确认讨论话题，然后点击“开始/继续实验”。正式链接会自动设置类型、严重程度和组别，被试不需要自行选择。")
+
 # ==================== 主界面布局 ====================
 st.header("🎭 实验角色说明")
 
@@ -2102,28 +2313,12 @@ else:
     else:
         # ========== 人类欺凌者模式 ==========
         if st.session_state.human_bully_mode:
-            # 显示角色引导卡片
+            # 显示正式实验角色任务卡片：不再使用固定示例，避免话题跑偏或前言不搭后语。
             with st.container():
-                st.markdown("### 🎭 你的欺凌者角色")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.markdown(f"**画像**：{st.session_state.bully_profile}")
-                    desc = {
-                        "易怒的青少年": "情绪化、面子敏感、叛逆、渴望理解",
-                        "愤世嫉俗的社会青年": "现实挫败、防御性强、实用主义、自尊心强",
-                        "固执的中年人": "经验依赖、权威敏感、思维固化"
-                    }.get(st.session_state.bully_profile, "")
-                    st.markdown(f"**性格**：{desc}")
-                with col_b:
-                    st.markdown(f"**攻击类型**：{st.session_state.bullying_type}（{st.session_state.bullying_severity}）")
-                    attack_example = BULLYING_SCENARIOS[st.session_state.bullying_type][st.session_state.bullying_severity]
-                    st.markdown(f"**攻击方式**：{attack_example}")
-                st.info(
-                    "**示例发言**：\n"
-                    "- “笑死，现在的00后除了要高工资还会干什么？纯纯的眼高手低。”\n"
-                    "- “天天喊着整顿职场，其实就是能力差还懒，真够可笑的。”\n"
-                    "请结合左侧选择的【欺凌类型】（如造谣、辱骂等），模仿上述风格输入，保持角色一致性。"
-                )
+                st.markdown("### 🎭 你的表达任务")
+                st.markdown(f"**当前表达方式**：{st.session_state.bullying_type}型—{st.session_state.bullying_severity}")
+                st.info(get_current_task_description())
+                st.warning("请围绕你自己填写的讨论话题进行表达；不要输入真实个人隐私、现实威胁、露骨性细节或可指向现实个人的信息。")
             
             # 人类输入表单
             with st.form(key="human_input_form", clear_on_submit=True):
@@ -2148,7 +2343,7 @@ else:
                     st.session_state.termination_note = "真人被试主动终止"
                     save_summary_csv("Human_Terminated")
                     st.session_state.experiment_completed = True
-                    st.success("✅ 实验结束！非常感谢您的参与。请点击最下方【导出实验数据】并将CSV文件发送给主试。")
+                    st.success("✅ 实验结束！非常感谢您的参与。数据已自动保存。")
                     st.rerun()
         else:
             # ========== AI模式（原样保留，不做任何改动）==========
