@@ -14,6 +14,14 @@ import time
 # 加载环境变量
 load_dotenv()
 
+# ==================== 页面配置（必须放在所有 st.* 命令之前）====================
+st.set_page_config(
+    page_title="基于欺凌类型诊断的精准干预实验平台 v3.2",
+    page_icon="🧪",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # ==================== 1. 数据结构：定义操作性定义库（纯中文）====================
 BULLYING_SCENARIOS = {
     "辱骂": {
@@ -168,10 +176,14 @@ def init_session_state():
 
 def apply_url_condition():
     """读取专属链接参数，自动设置被试编号、组别、欺凌类型、严重程度与真人输入模式。"""
+    # 兼容不同 Streamlit 版本：新版用 st.query_params，旧版用 experimental_get_query_params。
     try:
         params = st.query_params
     except Exception:
-        return
+        try:
+            params = st.experimental_get_query_params()
+        except Exception:
+            params = {}
 
     def _get_param(name, default=None):
         val = params.get(name, default)
@@ -219,14 +231,6 @@ def get_current_task_description():
 # 初始化
 init_session_state()
 apply_url_condition()
-
-# ==================== 页面配置 ====================
-st.set_page_config(
-    page_title="基于欺凌类型诊断的精准干预实验平台 v3.2",
-    page_icon="🧪",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # ==================== 标题和描述 ====================
 st.title("🧪 基于欺凌类型诊断的精准干预实验平台")
