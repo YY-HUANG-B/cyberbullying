@@ -1548,7 +1548,7 @@ def generate_agent_response(role, client):
         try:
             max_tokens_map = {"bully": 700, "victim": 550, "therapist": 900}
             response = client.chat.completions.create(
-                model="deepseek-chat",
+                model="deepseek-v4-flash",
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens_map.get(role, 700),
@@ -1807,7 +1807,7 @@ def score_human_input(text, client):
     ]
     try:
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             messages=messages,
             temperature=0.2,
             max_tokens=120,
